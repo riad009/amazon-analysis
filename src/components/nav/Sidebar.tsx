@@ -41,6 +41,13 @@ export function Sidebar() {
           <p className="text-[10px] text-muted-foreground leading-tight">PPC Intelligence</p>
         </div>
       </div>
+      {/* Powered by */}
+      <div className="px-5 py-2 border-b bg-muted/30">
+        <p className="text-[10px] text-muted-foreground">
+          Powered by{" "}
+          <span className="font-semibold text-foreground">Dra Soft</span>
+        </p>
+      </div>
 
       {/* Brand context */}
       <div className="px-4 py-3 border-b">
@@ -83,11 +90,14 @@ export function Sidebar() {
       </nav>
 
       {/* Footer */}
-      <div className="px-4 py-3 border-t">
+      <div className="px-4 py-3 border-t space-y-2">
         <button className="flex items-center gap-2 text-xs text-muted-foreground hover:text-foreground transition-colors w-full">
           <Settings className="w-3.5 h-3.5" />
           Settings
         </button>
+        <p className="text-[10px] text-muted-foreground">
+          Powered by <span className="font-semibold text-foreground">Dra Soft</span>
+        </p>
       </div>
     </aside>
   );

@@ -8,7 +8,7 @@ const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
   title: "SellerOS – Amazon PPC Intelligence",
-  description: "AI-powered Amazon PPC campaign management and optimization",
+  description: "Powered by Dra Soft",
 };
 
 export default function RootLayout({

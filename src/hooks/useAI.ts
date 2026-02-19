@@ -53,7 +53,11 @@ export function useAICampaignSuggestions() {
           }),
         });
 
-        if (!res.ok) throw new Error(`API error ${res.status}`);
+        if (!res.ok) {
+          const j = await res.json().catch(() => ({}));
+          if (res.status === 429) throw new Error("Rate limit: " + (j.error ?? "Please wait a minute and try again."));
+          throw new Error(`API error ${res.status}`);
+        }
 
         const json = await res.json();
         if (!json.success) throw new Error(json.error ?? "Unknown error");
@@ -185,6 +189,11 @@ export function useAIInsights() {
           if (res.status === 429) throw new Error("Rate limit: " + (j.error ?? "Please wait a minute and try again."));
           throw new Error(`API error ${res.status}`);
         }
+
+        const json = await res.json();
+        if (!json.success) throw new Error(json.error ?? "Unknown error");
+
+        const data = json.data as InsightsResponse;
         if (data.portfolioSummary) setPortfolioSummary(data.portfolioSummary);
 
         const insights: Insight[] = data.insights.map((g, i) => ({
