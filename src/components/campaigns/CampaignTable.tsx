@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, Fragment } from "react";
 import { Campaign, AISuggestion } from "@/lib/types";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
@@ -200,9 +200,8 @@ export function CampaignTable({
               );
 
               return (
-                <>
+                <Fragment key={c.id}>
                   <TableRow
-                    key={c.id}
                     className={`text-xs transition-colors ${
                       isSelected ? "bg-primary/5" : ""
                     } ${isExpanded ? "border-b-0" : ""}`}
@@ -343,7 +342,7 @@ export function CampaignTable({
                       </TableCell>
                     </TableRow>
                   )}
-                </>
+                </Fragment>
               );
             })}
           </TableBody>

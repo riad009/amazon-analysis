@@ -42,11 +42,9 @@ export function Sidebar() {
         </div>
       </div>
       {/* Powered by */}
-      <div className="px-5 py-2 border-b bg-muted/30">
-        <p className="text-[10px] text-muted-foreground">
-          Powered by{" "}
-          <span className="font-semibold text-foreground">Dra Soft</span>
-        </p>
+      <div className="px-5 py-2.5 border-b bg-muted/30">
+        <p className="text-[10px] text-muted-foreground leading-tight">Powered by</p>
+        <p className="text-sm font-bold text-foreground tracking-tight">Dra Soft</p>
       </div>
 
       {/* Brand context */}
@@ -95,9 +93,8 @@ export function Sidebar() {
           <Settings className="w-3.5 h-3.5" />
           Settings
         </button>
-        <p className="text-[10px] text-muted-foreground">
-          Powered by <span className="font-semibold text-foreground">Dra Soft</span>
-        </p>
+        <p className="text-[10px] text-muted-foreground leading-tight">Powered by</p>
+        <p className="text-sm font-bold text-foreground tracking-tight">Dra Soft</p>
       </div>
     </aside>
   );
