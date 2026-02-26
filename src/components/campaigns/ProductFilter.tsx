@@ -6,20 +6,20 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Input } from "@/components/ui/input";
 import { ChevronDown, Package, X } from "lucide-react";
 import { Product } from "@/lib/types";
-import { MOCK_PRODUCTS } from "@/lib/mock-data";
 
 interface ProductFilterProps {
+  products: Product[];
   selectedProductId: string | "All";
   onChange: (productId: string | "All") => void;
 }
 
-export function ProductFilter({ selectedProductId, onChange }: ProductFilterProps) {
+export function ProductFilter({ products, selectedProductId, onChange }: ProductFilterProps) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
 
-  const selectedProduct = MOCK_PRODUCTS.find((p) => p.id === selectedProductId);
+  const selectedProduct = products.find((p) => p.id === selectedProductId);
 
-  const filtered = MOCK_PRODUCTS.filter(
+  const filtered = products.filter(
     (p) =>
       p.name.toLowerCase().includes(search.toLowerCase()) ||
       p.asin.toLowerCase().includes(search.toLowerCase())
@@ -69,9 +69,8 @@ export function ProductFilter({ selectedProductId, onChange }: ProductFilterProp
         <div className="max-h-[280px] overflow-auto">
           <button
             onClick={() => select(null)}
-            className={`w-full flex items-center gap-3 px-4 py-3 text-sm text-left border-b hover:bg-muted transition-colors ${
-              selectedProductId === "All" ? "bg-muted font-medium" : ""
-            }`}
+            className={`w-full flex items-center gap-3 px-4 py-3 text-sm text-left border-b hover:bg-muted transition-colors ${selectedProductId === "All" ? "bg-muted font-medium" : ""
+              }`}
           >
             <div className="w-8 h-8 rounded bg-muted flex items-center justify-center shrink-0">
               <Package className="w-4 h-4 text-muted-foreground" />
@@ -82,9 +81,8 @@ export function ProductFilter({ selectedProductId, onChange }: ProductFilterProp
             <button
               key={p.id}
               onClick={() => select(p)}
-              className={`w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-muted transition-colors ${
-                selectedProductId === p.id ? "bg-primary/10 font-medium" : ""
-              }`}
+              className={`w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-muted transition-colors ${selectedProductId === p.id ? "bg-primary/10 font-medium" : ""
+                }`}
             >
               <div className="w-8 h-8 rounded bg-muted flex items-center justify-center shrink-0 text-xs font-mono text-muted-foreground">
                 {p.asin.slice(0, 4)}
