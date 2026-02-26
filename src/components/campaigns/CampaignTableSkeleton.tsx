@@ -32,7 +32,7 @@ export function CampaignTableSkeleton() {
                     <div className="flex flex-col gap-1.5 min-w-[200px]">
                         <div
                             className="h-3.5 rounded bg-muted/60 animate-pulse"
-                            style={{ width: `${140 + Math.random() * 80}px` }}
+                            style={{ width: `${140 + (rowIdx * 17) % 80}px` }}
                         />
                         <div className="w-24 h-2.5 rounded bg-muted/30 animate-pulse" />
                     </div>

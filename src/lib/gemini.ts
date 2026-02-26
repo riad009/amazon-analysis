@@ -1,7 +1,7 @@
 import { GoogleGenerativeAI, GenerativeModel } from "@google/generative-ai";
 
 // Try models in priority order — flash is fastest, flash-8b is free-tier-friendly
-const MODEL_PRIORITY = ["gemini-1.5-flash", "gemini-1.5-flash-8b", "gemini-pro"];
+const MODEL_PRIORITY = ["gemini-2.0-flash", "gemini-2.0-flash-lite", "gemini-1.5-pro"];
 
 let _model: GenerativeModel | null = null;
 let _modelName = MODEL_PRIORITY[0];

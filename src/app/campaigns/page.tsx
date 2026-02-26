@@ -81,13 +81,15 @@ export default function CampaignsPage() {
   const {
     campaigns: rawCampaigns,
     loading: campaignsLoading,
+    metricsLoading,
     error: campaignsError,
     dataSource,
+    metricsAvailable,
     refresh,
     lastFetched,
   } = useAmazonCampaigns(dateRange);
 
-  const { products } = useAmazonProducts();
+  const { products, campaignProductMap } = useAmazonProducts();
 
   // Local campaign state (with AI suggestions merged in)
   const [campaignOverrides, setCampaignOverrides] = useState<
@@ -98,9 +100,12 @@ export default function CampaignsPage() {
   const campaigns = useMemo(() => {
     return rawCampaigns.map((c) => {
       const override = campaignOverrides.get(c.id);
-      return override ? { ...c, ...override } : c;
+      // Tag campaigns with their product ASINs from the mapping
+      const productIds = campaignProductMap[c.id] ?? [];
+      const base = { ...c, productIds };
+      return override ? { ...base, ...override } : base;
     });
-  }, [rawCampaigns, campaignOverrides]);
+  }, [rawCampaigns, campaignOverrides, campaignProductMap]);
 
   const [aiError, setAiError] = useState<string | null>(null);
 
@@ -126,6 +131,8 @@ export default function CampaignsPage() {
       const campaign = campaigns.find((c) => c.id === campaignId);
       if (!campaign) return prev;
 
+      const suggestion = campaign.aiSuggestions.find((s) => s.id === suggestionId);
+
       const updatedSuggestions = campaign.aiSuggestions.map((s) =>
         s.id !== suggestionId
           ? s
@@ -142,6 +149,27 @@ export default function CampaignsPage() {
       );
 
       next.set(campaignId, { aiSuggestions: updatedSuggestions });
+
+      // Persist feedback for AI learning (fire and forget)
+      if (suggestion) {
+        fetch("/api/ai/feedback", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            id: suggestionId,
+            campaignId,
+            campaignName: campaign.name,
+            suggestionType: suggestion.type,
+            suggestionTitle: suggestion.title,
+            action,
+            userNote: note || undefined,
+            currentValue: suggestion.currentValue,
+            recommendedValue: suggestion.recommendedValue,
+            unit: suggestion.unit,
+          }),
+        }).catch((err) => console.error("[Feedback save]", err));
+      }
+
       return next;
     });
   }
@@ -149,8 +177,10 @@ export default function CampaignsPage() {
   async function handleGenerateAI() {
     setAiError(null);
     try {
+      // Send only top 5 campaigns to avoid token limits
+      const topCampaigns = filtered.slice(0, 5);
       const suggestionMap = await generate(
-        campaigns,
+        topCampaigns,
         MOCK_CHANGE_EVENTS,
         dateRange
       );
@@ -322,7 +352,7 @@ export default function CampaignsPage() {
           </>
         ) : (
           <>
-            <PerfSummary campaigns={filtered} />
+            <PerfSummary campaigns={filtered} metricsLoading={metricsLoading} />
             <CampaignFiltersBar
               filters={filters}
               onChange={setFilters}

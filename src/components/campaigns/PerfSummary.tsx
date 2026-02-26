@@ -2,10 +2,11 @@
 
 import { Campaign } from "@/lib/types";
 import { formatCurrency, formatNumber, formatPercent, pctChange, changeClass, changeArrow } from "@/lib/format";
-import { TrendingUp, TrendingDown, DollarSign, MousePointerClick, ShoppingCart, BarChart3 } from "lucide-react";
+import { TrendingUp, TrendingDown, DollarSign, MousePointerClick, ShoppingCart, BarChart3, Loader2 } from "lucide-react";
 
 interface PerfSummaryProps {
   campaigns: Campaign[];
+  metricsLoading?: boolean;
 }
 
 interface StatCard {
@@ -16,7 +17,7 @@ interface StatCard {
   colorClass?: string;
 }
 
-export function PerfSummary({ campaigns }: PerfSummaryProps) {
+export function PerfSummary({ campaigns, metricsLoading }: PerfSummaryProps) {
   const total = campaigns.reduce(
     (acc, c) => ({
       impressions: acc.impressions + c.impressions,
@@ -31,6 +32,8 @@ export function PerfSummary({ campaigns }: PerfSummaryProps) {
     { impressions: 0, clicks: 0, orders: 0, sales: 0, spend: 0, prevSales: 0, prevSpend: 0, prevOrders: 0 }
   );
 
+  const hasMetrics = total.sales > 0 || total.spend > 0 || total.clicks > 0;
+
   const acos = total.sales > 0 ? (total.spend / total.sales) * 100 : 0;
   const prevAcos = total.prevSales > 0 ? (total.prevSpend / total.prevSales) * 100 : 0;
   const roas = total.spend > 0 ? total.sales / total.spend : 0;
@@ -39,39 +42,42 @@ export function PerfSummary({ campaigns }: PerfSummaryProps) {
     {
       label: "Total Sales",
       icon: DollarSign,
-      value: formatCurrency(total.sales),
-      change: pctChange(total.sales, total.prevSales),
+      value: metricsLoading && !hasMetrics ? "—" : formatCurrency(total.sales),
+      change: hasMetrics ? pctChange(total.sales, total.prevSales) : undefined,
     },
     {
       label: "Total Spend",
       icon: BarChart3,
-      value: formatCurrency(total.spend),
-      change: pctChange(total.spend, total.prevSpend),
+      value: metricsLoading && !hasMetrics ? "—" : formatCurrency(total.spend),
+      change: hasMetrics ? pctChange(total.spend, total.prevSpend) : undefined,
     },
     {
       label: "Portfolio ACOS",
       icon: TrendingDown,
-      value: formatPercent(acos),
-      change: pctChange(acos, prevAcos),
-      colorClass:
-        acos > 80 ? "text-red-600" : acos > 50 ? "text-yellow-600" : "text-emerald-600",
+      value: metricsLoading && !hasMetrics ? "—" : formatPercent(acos),
+      change: hasMetrics ? pctChange(acos, prevAcos) : undefined,
+      colorClass: hasMetrics
+        ? acos > 80 ? "text-red-600" : acos > 50 ? "text-yellow-600" : "text-emerald-600"
+        : undefined,
     },
     {
       label: "Portfolio ROAS",
       icon: TrendingUp,
-      value: roas.toFixed(2) + "x",
-      colorClass: roas < 1 ? "text-red-600" : roas < 2 ? "text-yellow-600" : "text-emerald-600",
+      value: metricsLoading && !hasMetrics ? "—" : roas.toFixed(2) + "x",
+      colorClass: hasMetrics
+        ? roas < 1 ? "text-red-600" : roas < 2 ? "text-yellow-600" : "text-emerald-600"
+        : undefined,
     },
     {
       label: "Total Orders",
       icon: ShoppingCart,
-      value: formatNumber(total.orders),
-      change: pctChange(total.orders, total.prevOrders),
+      value: metricsLoading && !hasMetrics ? "—" : formatNumber(total.orders),
+      change: hasMetrics ? pctChange(total.orders, total.prevOrders) : undefined,
     },
     {
       label: "Total Clicks",
       icon: MousePointerClick,
-      value: formatNumber(total.clicks),
+      value: metricsLoading && !hasMetrics ? "—" : formatNumber(total.clicks),
     },
   ];
 
@@ -88,7 +94,12 @@ export function PerfSummary({ campaigns }: PerfSummaryProps) {
               <Icon className="w-3.5 h-3.5" />
               <span className="text-[11px] font-medium uppercase tracking-wide">{s.label}</span>
             </div>
-            <p className={`text-xl font-bold font-mono ${s.colorClass ?? ""}`}>{s.value}</p>
+            <div className="flex items-center gap-2">
+              <p className={`text-xl font-bold font-mono ${s.colorClass ?? ""}`}>{s.value}</p>
+              {metricsLoading && !hasMetrics && (
+                <Loader2 className="w-3.5 h-3.5 animate-spin text-muted-foreground" />
+              )}
+            </div>
             {s.change !== undefined && Math.abs(s.change) > 0.1 && (
               <p className={`text-[11px] ${changeClass(s.change, s.label.includes("ACOS") || s.label.includes("Spend"))}`}>
                 {changeArrow(s.change)} {Math.abs(s.change).toFixed(1)}% vs prev. period

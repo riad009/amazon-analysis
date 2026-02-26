@@ -18,6 +18,7 @@ export async function GET() {
             success: true,
             source: "mock",
             data: MOCK_PRODUCTS,
+            campaignProductMap: {},
         });
     }
 
@@ -26,6 +27,9 @@ export async function GET() {
 
         // Deduplicate by ASIN
         const asinMap = new Map<string, Product>();
+        // Build campaignId → asin[] mapping
+        const campaignProductMap: Record<string, string[]> = {};
+
         for (const ad of rawAds) {
             if (!asinMap.has(ad.asin)) {
                 asinMap.set(ad.asin, {
@@ -34,14 +38,26 @@ export async function GET() {
                     name: ad.asin, // Amazon Ads API doesn't return product names — just ASIN
                 });
             }
+
+            // Map campaignId → list of ASINs
+            const cid = String(ad.campaignId);
+            if (!campaignProductMap[cid]) {
+                campaignProductMap[cid] = [];
+            }
+            if (!campaignProductMap[cid].includes(ad.asin)) {
+                campaignProductMap[cid].push(ad.asin);
+            }
         }
 
         const products = Array.from(asinMap.values());
+
+        console.log(`[Products] ${products.length} unique ASINs, ${Object.keys(campaignProductMap).length} campaigns mapped`);
 
         return NextResponse.json({
             success: true,
             source: "live",
             data: products,
+            campaignProductMap,
         });
     } catch (err) {
         console.error("[Amazon Products API]", err);
@@ -51,6 +67,7 @@ export async function GET() {
             source: "mock",
             error: String(err),
             data: MOCK_PRODUCTS,
+            campaignProductMap: {},
         });
     }
 }

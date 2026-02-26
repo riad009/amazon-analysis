@@ -5,6 +5,7 @@ import { Product } from "@/lib/types";
 
 interface UseProductsResult {
     products: Product[];
+    campaignProductMap: Record<string, string[]>;
     loading: boolean;
     error: string | null;
     dataSource: "live" | "mock" | "loading";
@@ -12,6 +13,7 @@ interface UseProductsResult {
 
 export function useAmazonProducts(): UseProductsResult {
     const [products, setProducts] = useState<Product[]>([]);
+    const [campaignProductMap, setCampaignProductMap] = useState<Record<string, string[]>>({});
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [dataSource, setDataSource] = useState<"live" | "mock" | "loading">(
@@ -30,6 +32,7 @@ export function useAmazonProducts(): UseProductsResult {
             if (!json.success) throw new Error(json.error ?? "Failed to fetch products");
 
             setProducts(json.data);
+            setCampaignProductMap(json.campaignProductMap ?? {});
             setDataSource(json.source === "live" ? "live" : "mock");
         } catch (err) {
             setError(String(err));
@@ -43,5 +46,5 @@ export function useAmazonProducts(): UseProductsResult {
         fetchProducts();
     }, [fetchProducts]);
 
-    return { products, loading, error, dataSource };
+    return { products, campaignProductMap, loading, error, dataSource };
 }

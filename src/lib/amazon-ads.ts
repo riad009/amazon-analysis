@@ -186,77 +186,129 @@ export async function fetchCampaignReport(
   const config = getConfig();
   if (!config) throw new Error("Amazon Ads credentials not configured");
 
-  // Request async report (v3 reporting)
-  const reportBody = {
+  // Try v2 report API first (faster: 5-30s)
+  try {
+    return await fetchReportV2(config, endDate);
+  } catch (v2Err) {
+    console.warn("[ADS Report] v2 failed, trying v3:", v2Err);
+  }
+
+  // Fallback to v3 async reporting
+  return await fetchReportV3(config, startDate, endDate);
+}
+
+// ── v2 Report (faster, single-date snapshot) ──────────────────────────────
+
+async function fetchReportV2(config: AdsConfig, reportDate: string): Promise<ReportMetrics[]> {
+  const body = {
+    reportDate,
+    metrics: "campaignId,campaignName,impressions,clicks,cost,attributedSales7d,attributedConversions7d,attributedUnitsOrdered7d",
+  };
+
+  console.log(`[ADS Report v2] Creating report for ${reportDate}...`);
+  const createRes = await adsRequest("/v2/sp/campaigns/report", config, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+
+  if (!createRes.ok) {
+    const txt = await createRes.text();
+    throw new Error(`v2 create error (${createRes.status}): ${txt}`);
+  }
+
+  const { reportId } = await createRes.json();
+  if (!reportId) throw new Error("v2: no reportId returned");
+
+  // Poll (v2 is faster: max 60s)
+  let reportUrl: string | null = null;
+  for (let i = 0; i < 30; i++) {
+    await new Promise((r) => setTimeout(r, 2000));
+    const statusRes = await adsRequest(`/v2/reports/${reportId}`, config);
+    if (!statusRes.ok) continue;
+
+    const statusData = await statusRes.json();
+    if (i % 3 === 0) console.log(`[ADS Report v2] Poll ${i + 1}/30 — status: ${statusData.status}`);
+
+    if (statusData.status === "SUCCESS") { reportUrl = statusData.location; break; }
+    if (statusData.status === "FAILURE") throw new Error(`v2 report failed: ${statusData.statusDetails}`);
+  }
+
+  if (!reportUrl) throw new Error("v2 report timed out after 60s");
+
+  // Download and decompress
+  const rawReport = await downloadGzipJson(reportUrl);
+
+  const metrics: ReportMetrics[] = rawReport.map((row: Record<string, unknown>) => ({
+    campaignId: String(row.campaignId ?? ""),
+    campaignName: String(row.campaignName ?? ""),
+    impressions: Number(row.impressions ?? 0),
+    clicks: Number(row.clicks ?? 0),
+    cost: Number(row.cost ?? 0),
+    purchases7d: Number(row.attributedConversions7d ?? 0),
+    unitsSoldClicks7d: Number(row.attributedUnitsOrdered7d ?? 0),
+    sales7d: Number(row.attributedSales7d ?? 0),
+  }));
+
+  console.log(`[ADS Report v2] ✅ ${metrics.length} campaigns with metrics`);
+  return metrics;
+}
+
+// ── v3 Report (slower, supports date ranges) ──────────────────────────────
+
+async function fetchReportV3(config: AdsConfig, startDate: string, endDate: string): Promise<ReportMetrics[]> {
+  const body = {
     name: `sp-campaigns-${startDate}-${endDate}`,
-    startDate,
-    endDate,
+    startDate, endDate,
     configuration: {
       adProduct: "SPONSORED_PRODUCTS",
       groupBy: ["campaign"],
-      columns: [
-        "campaignId",
-        "campaignName",
-        "impressions",
-        "clicks",
-        "cost",
-        "purchases7d",
-        "unitsSoldClicks7d",
-        "sales7d",
-      ],
+      columns: ["campaignId", "campaignName", "impressions", "clicks", "cost", "purchases7d", "unitsSoldClicks7d", "sales7d"],
       reportTypeId: "spCampaigns",
       timeUnit: "SUMMARY",
       format: "GZIP_JSON",
     },
   };
 
+  console.log(`[ADS Report v3] Creating report for ${startDate} to ${endDate}...`);
   const createRes = await adsRequest("/reporting/reports", config, {
     method: "POST",
-    body: JSON.stringify(reportBody),
+    body: JSON.stringify(body),
   });
 
   if (!createRes.ok) {
     const txt = await createRes.text();
-    throw new Error(`Report create error (${createRes.status}): ${txt}`);
+    throw new Error(`v3 create error (${createRes.status}): ${txt}`);
   }
 
   const { reportId } = await createRes.json();
 
-  // Poll for completion (max 120s = 60 polls × 2s)
   let reportUrl: string | null = null;
   for (let i = 0; i < 60; i++) {
     await new Promise((r) => setTimeout(r, 2000));
-
-    const statusRes = await adsRequest(
-      `/reporting/reports/${reportId}`,
-      config
-    );
+    const statusRes = await adsRequest(`/reporting/reports/${reportId}`, config);
     if (!statusRes.ok) continue;
-
-    const statusData = await statusRes.json();
-    if (i % 5 === 0) {
-      console.log(`[ADS Report] Poll ${i + 1}/60 — status: ${statusData.status}`);
-    }
-    if (statusData.status === "COMPLETED") {
-      reportUrl = statusData.url;
-      break;
-    }
-    if (statusData.status === "FAILURE") {
-      throw new Error(`Report generation failed: ${statusData.failureReason}`);
-    }
+    const d = await statusRes.json();
+    if (i % 5 === 0) console.log(`[ADS Report v3] Poll ${i + 1}/60 — status: ${d.status}`);
+    if (d.status === "COMPLETED") { reportUrl = d.url; break; }
+    if (d.status === "FAILURE") throw new Error(`v3 failed: ${d.failureReason}`);
   }
 
-  if (!reportUrl) throw new Error("Report timed out after 120s");
+  if (!reportUrl) throw new Error("v3 report timed out after 120s");
 
-  // Download and decompress
-  const dlRes = await fetch(reportUrl);
-  if (!dlRes.ok) throw new Error(`Report download error: ${dlRes.status}`);
+  const data = await downloadGzipJson(reportUrl);
+  console.log(`[ADS Report v3] ✅ ${data.length} campaigns with metrics`);
+  return data as unknown as ReportMetrics[];
+}
 
-  // The response is gzipped JSON — use DecompressionStream if available
-  let reportData: ReportMetrics[];
+// ── Helper: download and decompress gzip JSON ─────────────────────────────
+
+async function downloadGzipJson(url: string): Promise<Record<string, unknown>[]> {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Download error: ${res.status}`);
+
   try {
     const ds = new DecompressionStream("gzip");
-    const decompressed = dlRes.body!.pipeThrough(ds);
+    const decompressed = res.body!.pipeThrough(ds);
     const reader = decompressed.getReader();
     const chunks: Uint8Array[] = [];
     let done = false;
@@ -265,17 +317,12 @@ export async function fetchCampaignReport(
       if (result.value) chunks.push(result.value);
       done = result.done;
     }
-    const text = new TextDecoder().decode(
-      Buffer.concat(chunks.map((c) => Buffer.from(c)))
-    );
-    reportData = JSON.parse(text);
+    const text = new TextDecoder().decode(Buffer.concat(chunks.map((c) => Buffer.from(c))));
+    return JSON.parse(text);
   } catch {
-    // Fallback: try reading as plain JSON
-    const text = await dlRes.text();
-    reportData = JSON.parse(text);
+    const text = await res.text();
+    return JSON.parse(text);
   }
-
-  return reportData;
 }
 
 // ─── Advertised Products (ASINs) ────────────────────────────────────────────

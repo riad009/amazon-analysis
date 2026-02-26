@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getModel, rotateFallbackModel } from "@/lib/gemini";
 import { Campaign, ChangeEvent } from "@/lib/types";
+import { promises as fs } from "fs";
+import path from "path";
+
+const FEEDBACK_FILE = path.join(process.cwd(), "data", "ai-feedback.json");
 
 const SYSTEM_PROMPT = `You are an expert Amazon PPC (Pay-Per-Click) advertising analyst. 
 You think like a senior PPC manager with 10+ years of experience optimizing Sponsored Products campaigns.
@@ -27,7 +31,39 @@ export async function POST(req: NextRequest) {
 
     const { campaigns, changeEvents, dateRange } = body;
 
-    const prompt = `${SYSTEM_PROMPT}
+    // Load past feedback for AI learning
+    let feedbackContext = "";
+    try {
+      const feedbackData = await fs.readFile(FEEDBACK_FILE, "utf-8");
+      const feedback = JSON.parse(feedbackData);
+      if (feedback.length > 0) {
+        // Get last 50 entries for context
+        const recent = feedback.slice(-50);
+        const denials = recent.filter((f: Record<string, string>) => f.action === "deny");
+        const modifications = recent.filter((f: Record<string, string>) => f.action === "modify");
+        const approvals = recent.filter((f: Record<string, string>) => f.action === "approve");
+
+        feedbackContext = `
+
+## USER FEEDBACK HISTORY (LEARN FROM THIS)
+The seller has reviewed ${recent.length} past suggestions. Here is their decision history — USE THIS TO CALIBRATE YOUR RECOMMENDATIONS:
+
+### Approved (${approvals.length} times) — These types of suggestions the seller likes:
+${approvals.map((f: Record<string, string>) => `- ${f.suggestionType}: "${f.suggestionTitle}" for "${f.campaignName}"`).join("\n")}
+
+### Denied (${denials.length} times) — AVOID making similar suggestions:
+${denials.map((f: Record<string, string>) => `- ${f.suggestionType}: "${f.suggestionTitle}" for "${f.campaignName}"${f.userNote ? ` — Seller's reason: "${f.userNote}"` : ""}`).join("\n")}
+
+### Modified (${modifications.length} times) — The seller adjusted these:
+${modifications.map((f: Record<string, string>) => `- ${f.suggestionType}: "${f.suggestionTitle}" for "${f.campaignName}"${f.userNote ? ` — Seller's adjustment: "${f.userNote}"` : ""}`).join("\n")}
+
+IMPORTANT: Based on this feedback, adjust your suggestions. If the seller denied "lower_bid" suggestions, be more conservative with bid decreases. If they approved "increase_budget" suggestions, lean toward budget scaling. If they modified values, use their preferred range as a guide.`;
+      }
+    } catch {
+      // No feedback file yet — that's fine
+    }
+
+    const prompt = `${SYSTEM_PROMPT}${feedbackContext}
 
 ## Date Range
 Current period: ${dateRange.from} to ${dateRange.to}
@@ -37,41 +73,41 @@ ${JSON.stringify(changeEvents, null, 2)}
 
 ## Campaign Performance Data
 ${JSON.stringify(
-  campaigns.map((c) => ({
-    id: c.id,
-    name: c.name,
-    type: c.type,
-    status: c.status,
-    dailyBudget: c.dailyBudget,
-    biddingStrategy: c.biddingStrategy,
-    // Current period
-    current: {
-      impressions: c.impressions,
-      clicks: c.clicks,
-      orders: c.orders,
-      units: c.units,
-      sales: c.sales,
-      spend: c.spend,
-      cpc: c.cpc,
-      ctr: c.ctr,
-      acos: c.acos,
-      roas: c.roas,
-      conversionRate: c.conversion,
-    },
-    // Previous period
-    previous: {
-      impressions: c.prevImpressions,
-      clicks: c.prevClicks,
-      orders: c.prevOrders,
-      sales: c.prevSales,
-      spend: c.prevSpend,
-      acos: c.prevAcos,
-      roas: c.prevRoas,
-    },
-  })),
-  null,
-  2
-)}
+      campaigns.map((c) => ({
+        id: c.id,
+        name: c.name,
+        type: c.type,
+        status: c.status,
+        dailyBudget: c.dailyBudget,
+        biddingStrategy: c.biddingStrategy,
+        // Current period
+        current: {
+          impressions: c.impressions,
+          clicks: c.clicks,
+          orders: c.orders,
+          units: c.units,
+          sales: c.sales,
+          spend: c.spend,
+          cpc: c.cpc,
+          ctr: c.ctr,
+          acos: c.acos,
+          roas: c.roas,
+          conversionRate: c.conversion,
+        },
+        // Previous period
+        previous: {
+          impressions: c.prevImpressions,
+          clicks: c.prevClicks,
+          orders: c.prevOrders,
+          sales: c.prevSales,
+          spend: c.prevSpend,
+          acos: c.prevAcos,
+          roas: c.prevRoas,
+        },
+      })),
+      null,
+      2
+    )}
 
 ## Instructions
 For EACH campaign, analyze:

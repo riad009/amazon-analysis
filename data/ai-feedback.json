@@ -1,0 +1,12 @@
+[
+  {
+    "id": "test-1",
+    "userNote": "Too aggressive",
+    "campaignName": "Test Campaign",
+    "suggestionType": "lower_bid",
+    "action": "deny",
+    "campaignId": "123",
+    "suggestionTitle": "Test suggestion",
+    "timestamp": "2026-02-26T08:57:27.342Z"
+  }
+]
