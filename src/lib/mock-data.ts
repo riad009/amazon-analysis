@@ -51,7 +51,16 @@ function makeSuggestion(partial: Partial<AISuggestion> & { id: string; campaignI
 
 // ─── Campaigns ───────────────────────────────────────────────────────────────
 
-export const MOCK_CAMPAIGNS: Campaign[] = [
+const MOCK_CAMPAIGN_DEFAULTS = {
+  keyword: "",
+  bid: 0,
+  placement: "ROS",
+  placementBidTOS: 0,
+  placementBidPP: 0,
+  tosIS: 0,
+};
+
+export const MOCK_CAMPAIGNS: Campaign[] = ([
   {
     id: "c1",
     name: "PTS – SPT – CAT",
@@ -377,7 +386,7 @@ export const MOCK_CAMPAIGNS: Campaign[] = [
       }),
     ],
   },
-];
+] as Omit<Campaign, keyof typeof MOCK_CAMPAIGN_DEFAULTS>[]).map(c => ({ ...MOCK_CAMPAIGN_DEFAULTS, ...c })) as Campaign[];
 
 // ─── Change Events ────────────────────────────────────────────────────────────
 

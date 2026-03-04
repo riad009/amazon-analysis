@@ -49,6 +49,14 @@ export interface Campaign {
   acos: number; // %
   roas: number;
 
+  // Keyword & placement data
+  keyword: string;
+  bid: number;
+  placement: string; // "TOS" | "ROS" | "PP" or combined
+  placementBidTOS: number; // % adjustment for Top of Search
+  placementBidPP: number;  // % adjustment for Product Pages
+  tosIS: number; // Top of Search Impression Share %
+
   // Previous period metrics
   prevImpressions?: number;
   prevClicks?: number;
@@ -62,20 +70,37 @@ export interface Campaign {
   aiSuggestions: AISuggestion[];
 }
 
+// ─── Placement Metrics ──────────────────────────────────────────────────────
+
+export interface PlacementMetrics {
+  placement: "Top of Search" | "Product Page" | "Rest of Search";
+  impressions: number;
+  clicks: number;
+  orders: number;
+  units: number;
+  sales: number;
+  spend: number;
+  cpc: number;
+  ctr: number;  // %
+  acos: number; // %
+  roas: number;
+  conversion: number; // %
+}
+
 // ─── AI Suggestion ──────────────────────────────────────────────────────────
 
 export interface AISuggestion {
   id: string;
   campaignId: string;
   type:
-    | "raise_bid"
-    | "lower_bid"
-    | "increase_budget"
-    | "decrease_budget"
-    | "pause_campaign"
-    | "enable_campaign"
-    | "add_negative_keyword"
-    | "adjust_placement";
+  | "raise_bid"
+  | "lower_bid"
+  | "increase_budget"
+  | "decrease_budget"
+  | "pause_campaign"
+  | "enable_campaign"
+  | "add_negative_keyword"
+  | "adjust_placement";
   title: string;
   description: string;
   rationale: string;
@@ -143,9 +168,18 @@ export interface DateRange {
 export interface CampaignFilters {
   search: string;
   status: CampaignStatus | "All";
+  biddingStrategy: BiddingStrategy | "All";
+  placement: string | "All"; // "TOS" | "PP" | "ROS" | "All"
   minAcos: number | "";
   maxAcos: number | "";
   minRoas: number | "";
+  minSpend: number | "";
+  maxSpend: number | "";
+  minSales: number | "";
+  maxSales: number | "";
+  minClicks: number | "";
+  minOrders: number | "";
+  minImpressions: number | "";
   sortBy: keyof Campaign;
   sortDir: "asc" | "desc";
   productId: string | "All";

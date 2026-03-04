@@ -97,7 +97,7 @@ export function PerfSummary({ campaigns, metricsLoading }: PerfSummaryProps) {
             <div className="flex items-center gap-2">
               <p className={`text-xl font-bold font-mono ${s.colorClass ?? ""}`}>{s.value}</p>
               {metricsLoading && !hasMetrics && (
-                <Loader2 className="w-3.5 h-3.5 animate-spin text-muted-foreground" />
+                <span className="text-[10px] text-muted-foreground">Loading...</span>
               )}
             </div>
             {s.change !== undefined && Math.abs(s.change) > 0.1 && (

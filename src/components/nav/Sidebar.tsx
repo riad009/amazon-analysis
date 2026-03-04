@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useState, useEffect } from "react";
 import { cn } from "@/lib/utils";
 import {
   BarChart3,
@@ -9,7 +10,14 @@ import {
   TrendingUp,
   Settings,
   ChevronRight,
+  ChevronDown,
 } from "lucide-react";
+
+interface AccountProfile {
+  profileId: number;
+  countryCode: string;
+  accountInfo: { name: string; type: string };
+}
 
 const NAV_ITEMS = [
   {
@@ -28,6 +36,42 @@ const NAV_ITEMS = [
 
 export function Sidebar() {
   const pathname = usePathname();
+  const [profiles, setProfiles] = useState<AccountProfile[]>([]);
+  const [selectedProfile, setSelectedProfile] = useState<AccountProfile | null>(null);
+  const [dropdownOpen, setDropdownOpen] = useState(false);
+
+  useEffect(() => {
+    fetch("/api/amazon/profiles")
+      .then((res) => res.json())
+      .then((json) => {
+        if (json.success && Array.isArray(json.data)) {
+          const sellers = json.data.filter(
+            (p: AccountProfile) => p.accountInfo?.type === "seller"
+          );
+          setProfiles(sellers);
+          if (sellers.length > 0) {
+            setSelectedProfile(sellers[0]);
+          }
+        }
+      })
+      .catch((err) => console.error("[Sidebar]", err));
+  }, []);
+
+  function handleSelectAccount(profile: AccountProfile) {
+    setSelectedProfile(profile);
+    setDropdownOpen(false);
+    // Notify campaigns page about account change
+    window.dispatchEvent(
+      new CustomEvent("account-changed", {
+        detail: { profileId: String(profile.profileId), name: profile.accountInfo.name },
+      })
+    );
+  }
+
+  const countryLabel =
+    selectedProfile?.countryCode === "US" ? "US Marketplace" :
+      selectedProfile?.countryCode === "CA" ? "CA Marketplace" :
+        selectedProfile?.countryCode ? `${selectedProfile.countryCode} Marketplace` : "";
 
   return (
     <aside className="w-[220px] shrink-0 border-r bg-background flex flex-col h-full">
@@ -47,11 +91,50 @@ export function Sidebar() {
         <p className="text-sm font-bold text-foreground tracking-tight">Dra Soft</p>
       </div>
 
-      {/* Brand context */}
-      <div className="px-4 py-3 border-b">
+      {/* Account selector */}
+      <div className="px-4 py-3 border-b relative">
         <p className="text-[11px] text-muted-foreground uppercase tracking-widest mb-1">Account</p>
-        <p className="text-sm font-medium">Pete &amp; Mary</p>
-        <p className="text-xs text-muted-foreground">US Marketplace</p>
+        {profiles.length > 1 ? (
+          <div className="relative">
+            <button
+              onClick={() => setDropdownOpen(!dropdownOpen)}
+              className="w-full flex items-center justify-between group hover:opacity-80 transition-opacity"
+            >
+              <div className="text-left">
+                <p className="text-sm font-medium">{selectedProfile?.accountInfo.name ?? "Loading..."}</p>
+                <p className="text-xs text-muted-foreground">{countryLabel}</p>
+              </div>
+              <ChevronDown className={cn("w-3.5 h-3.5 text-muted-foreground transition-transform", dropdownOpen && "rotate-180")} />
+            </button>
+            {dropdownOpen && (
+              <>
+                <div className="fixed inset-0 z-40" onClick={() => setDropdownOpen(false)} />
+                <div className="absolute left-2 right-2 top-full mt-1 z-50 bg-popover border rounded-md shadow-md py-1">
+                  {profiles.map((p) => (
+                    <button
+                      key={p.profileId}
+                      onClick={() => handleSelectAccount(p)}
+                      className={cn(
+                        "w-full text-left px-3 py-2 text-sm hover:bg-muted transition-colors",
+                        selectedProfile?.profileId === p.profileId && "bg-muted font-medium"
+                      )}
+                    >
+                      <p className="font-medium text-xs">{p.accountInfo.name}</p>
+                      <p className="text-[10px] text-muted-foreground">
+                        {p.countryCode === "US" ? "US Marketplace" : `${p.countryCode} Marketplace`}
+                      </p>
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+        ) : (
+          <div>
+            <p className="text-sm font-medium">{selectedProfile?.accountInfo.name ?? "Loading..."}</p>
+            <p className="text-xs text-muted-foreground">{countryLabel}</p>
+          </div>
+        )}
       </div>
 
       {/* Navigation */}
@@ -89,7 +172,10 @@ export function Sidebar() {
 
       {/* Footer */}
       <div className="px-4 py-3 border-t space-y-2">
-        <button className="flex items-center gap-2 text-xs text-muted-foreground hover:text-foreground transition-colors w-full">
+        <button
+          className="flex items-center gap-2 text-xs text-muted-foreground hover:text-foreground transition-colors w-full"
+          onClick={() => window.dispatchEvent(new CustomEvent("open-cache-settings"))}
+        >
           <Settings className="w-3.5 h-3.5" />
           Settings
         </button>
@@ -99,3 +185,4 @@ export function Sidebar() {
     </aside>
   );
 }
+

@@ -1,12 +1,13 @@
 "use client";
 
 import { useState, useCallback, useEffect, useRef } from "react";
-import { Campaign, DateRange } from "@/lib/types";
+import { Campaign, DateRange, PlacementMetrics } from "@/lib/types";
 
 export type DataSource = "live" | "mock" | "loading" | "error";
 
 interface UseCampaignsResult {
     campaigns: Campaign[];
+    placementData: Record<string, PlacementMetrics[]>;
     loading: boolean;
     metricsLoading: boolean;
     error: string | null;
@@ -18,9 +19,11 @@ interface UseCampaignsResult {
 
 export function useAmazonCampaigns(
     dateRange: DateRange,
+    profileId?: string,
     autoRefreshMs: number = 5 * 60 * 1000
 ): UseCampaignsResult {
     const [campaigns, setCampaigns] = useState<Campaign[]>([]);
+    const [placementData, setPlacementData] = useState<Record<string, PlacementMetrics[]>>({});
     const [loading, setLoading] = useState(true);
     const [metricsLoading, setMetricsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -29,21 +32,30 @@ export function useAmazonCampaigns(
     const [lastFetched, setLastFetched] = useState<Date | null>(null);
     const abortRef = useRef<AbortController | null>(null);
 
+    const fromStr = dateRange.from.toISOString().split("T")[0];
+    const toStr = dateRange.to.toISOString().split("T")[0];
+
     const fetchData = useCallback(async () => {
         abortRef.current?.abort();
         const controller = new AbortController();
         abortRef.current = controller;
 
+        // Clear old data immediately to prevent showing wrong account's data
+        setCampaigns([]);
+        setPlacementData({});
         setLoading(true);
         setError(null);
+        setDataSource("loading");
+        setMetricsAvailable(false);
+        setMetricsLoading(false);
 
-        const from = dateRange.from.toISOString().split("T")[0];
-        const to = dateRange.to.toISOString().split("T")[0];
+        const currentProfileId = profileId; // capture for stale check
 
         try {
-            // Phase 1: listing (may return cached data instantly!)
+            // ── Step 1: Get cached or listing data (instant) ──────────
+            const profileParam = profileId ? `&profileId=${profileId}` : "";
             const listingRes = await fetch(
-                `/api/amazon/campaigns?from=${from}&to=${to}&phase=listing`,
+                `/api/amazon/campaigns?from=${fromStr}&to=${toStr}&phase=listing${profileParam}`,
                 { signal: controller.signal }
             );
 
@@ -51,53 +63,64 @@ export function useAmazonCampaigns(
             const listingJson = await listingRes.json();
             if (!listingJson.success) throw new Error(listingJson.error ?? "Failed");
 
-            // Show data immediately
+            // Stale check: if user switched accounts while we were fetching, discard
+            if (controller.signal.aborted) return;
+
+            // Show cached data immediately (instant display)
             setCampaigns(listingJson.data);
-            setDataSource(listingJson.source === "live" ? "live" : "mock");
+            setPlacementData(listingJson.placementData ?? {});
+            setDataSource("live");
             setMetricsAvailable(listingJson.metricsAvailable ?? false);
             setLastFetched(new Date());
             setLoading(false);
 
-            // If cached with metrics, or mock data, we're done
-            if (listingJson.cached && listingJson.metricsAvailable) return;
-            if (listingJson.source !== "live") return;
-
-            // Phase 2: full metrics (background)
-            setMetricsLoading(true);
-
-            try {
-                const metricsRes = await fetch(
-                    `/api/amazon/campaigns?from=${from}&to=${to}&phase=metrics`,
-                    { signal: controller.signal }
-                );
-
-                if (!metricsRes.ok) throw new Error(`Metrics error: ${metricsRes.status}`);
-                const metricsJson = await metricsRes.json();
-
-                if (metricsJson.success) {
-                    setCampaigns(metricsJson.data);
-                    setMetricsAvailable(metricsJson.metricsAvailable ?? false);
-                    setLastFetched(new Date());
-                }
-            } catch (metricsErr) {
-                if ((metricsErr as Error).name === "AbortError") return;
-                console.warn("[Campaigns] Metrics failed:", metricsErr);
-            } finally {
-                setMetricsLoading(false);
+            if (listingJson.metricsAvailable) {
+                console.log(`[Campaigns] 📦 Showing cached data (profile=${currentProfileId}) — refreshing...`);
             }
+
+            // ── Step 2: ALWAYS fetch fresh data from API ──────────────
+            // Only show "Loading..." if the cached data didn't already have metrics.
+            if (!listingJson.metricsAvailable) {
+                setMetricsLoading(true);
+            }
+            console.log(`[Campaigns] ⏳ Fetching metrics (profile=${currentProfileId})...`);
+
+            const fullRes = await fetch(
+                `/api/amazon/campaigns?from=${fromStr}&to=${toStr}&phase=all${profileParam}`,
+                { signal: controller.signal }
+            );
+
+            if (!fullRes.ok) throw new Error(`Metrics fetch error: ${fullRes.status}`);
+            const fullJson = await fullRes.json();
+            if (!fullJson.success) throw new Error(fullJson.error ?? "Metrics failed");
+
+            // Stale check again before applying
+            if (controller.signal.aborted) return;
+
+            // Replace website data with fresh live data
+            setCampaigns(fullJson.data);
+            setPlacementData(fullJson.placementData ?? {});
+            setMetricsAvailable(fullJson.metricsAvailable ?? false);
+            setMetricsLoading(false);
+            setLastFetched(new Date());
+            console.log(`[Campaigns] ✅ Live metrics loaded (profile=${currentProfileId}) — ${fullJson.data.length} campaigns`);
+
         } catch (err) {
             if ((err as Error).name === "AbortError") return;
             setError(String(err));
             setDataSource("error");
             setLoading(false);
+            setMetricsLoading(false);
         }
-    }, [dateRange]);
+    }, [fromStr, toStr, profileId]);
 
+    // Fetch on mount and date change
     useEffect(() => {
         fetchData();
-        return () => abortRef.current?.abort();
+        return () => { abortRef.current?.abort(); };
     }, [fetchData]);
 
+    // Auto-refresh every N minutes
     useEffect(() => {
         if (autoRefreshMs <= 0) return;
         const interval = setInterval(fetchData, autoRefreshMs);
@@ -106,6 +129,7 @@ export function useAmazonCampaigns(
 
     return {
         campaigns,
+        placementData,
         loading,
         metricsLoading,
         error,

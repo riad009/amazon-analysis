@@ -1,12 +1,12 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { MOCK_CHANGE_EVENTS } from "@/lib/mock-data";
 import { Campaign, CampaignFilters, DateRange, DateRangePreset } from "@/lib/types";
 import { DateRangePicker } from "@/components/campaigns/DateRangePicker";
 import { ProductFilter } from "@/components/campaigns/ProductFilter";
-import { CampaignFiltersBar } from "@/components/campaigns/CampaignFiltersBar";
 import { CampaignTable } from "@/components/campaigns/CampaignTable";
+import { CacheSettingsModal } from "@/components/campaigns/CacheSettingsModal";
 import { PerfSummary } from "@/components/campaigns/PerfSummary";
 import { CampaignTableSkeleton, PerfSummarySkeleton } from "@/components/campaigns/CampaignTableSkeleton";
 import { Button } from "@/components/ui/button";
@@ -22,6 +22,8 @@ import {
   Wifi,
   WifiOff,
   Database,
+  Settings,
+
 } from "lucide-react";
 import { useAICampaignSuggestions } from "@/hooks/useAI";
 import { useAmazonCampaigns, DataSource } from "@/hooks/useAmazonCampaigns";
@@ -59,19 +61,31 @@ function SourceBadge({ source }: { source: DataSource }) {
 }
 
 export default function CampaignsPage() {
-  const [preset, setPreset] = useState<DateRangePreset>("7d");
+
+  const [preset, setPreset] = useState<DateRangePreset>("30d");
   const [dateRange, setDateRange] = useState<DateRange>({
-    from: subDays(new Date(), 6),
+    from: subDays(new Date(), 29),
     to: new Date(),
   });
   const [selectedProductId, setSelectedProductId] = useState<string | "All">("All");
+  const [selectedProfile, setSelectedProfile] = useState<string>("");
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [filters, setFilters] = useState<CampaignFilters>({
     search: "",
     status: "All",
+    biddingStrategy: "All",
+    placement: "All",
     minAcos: "",
     maxAcos: "",
     minRoas: "",
+    minSpend: "",
+    maxSpend: "",
+    minSales: "",
+    maxSales: "",
+    minClicks: "",
+    minOrders: "",
+    minImpressions: "",
     sortBy: "acos",
     sortDir: "desc",
     productId: "All",
@@ -80,6 +94,7 @@ export default function CampaignsPage() {
   // Live API data hooks
   const {
     campaigns: rawCampaigns,
+    placementData,
     loading: campaignsLoading,
     metricsLoading,
     error: campaignsError,
@@ -87,9 +102,28 @@ export default function CampaignsPage() {
     metricsAvailable,
     refresh,
     lastFetched,
-  } = useAmazonCampaigns(dateRange);
+  } = useAmazonCampaigns(dateRange, selectedProfile || undefined);
 
   const { products, campaignProductMap } = useAmazonProducts();
+
+  // Listen for sidebar account change
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      if (detail?.profileId) {
+        setSelectedProfile(detail.profileId);
+      }
+    };
+    window.addEventListener("account-changed", handler);
+    return () => window.removeEventListener("account-changed", handler);
+  }, []);
+
+  // Listen for sidebar Settings click
+  useEffect(() => {
+    const handler = () => setSettingsOpen(true);
+    window.addEventListener("open-cache-settings", handler);
+    return () => window.removeEventListener("open-cache-settings", handler);
+  }, []);
 
   // Local campaign state (with AI suggestions merged in)
   const [campaignOverrides, setCampaignOverrides] = useState<
@@ -212,12 +246,6 @@ export default function CampaignsPage() {
       )
         return false;
       if (filters.status !== "All" && c.status !== filters.status) return false;
-      if (filters.minAcos !== "" && c.acos < Number(filters.minAcos))
-        return false;
-      if (filters.maxAcos !== "" && c.acos > Number(filters.maxAcos))
-        return false;
-      if (filters.minRoas !== "" && c.roas < Number(filters.minRoas))
-        return false;
       return true;
     });
   }, [campaigns, selectedProductId, filters]);
@@ -231,7 +259,7 @@ export default function CampaignsPage() {
   return (
     <div className="flex flex-col h-full">
       {/* Page header */}
-      <div className="border-b bg-background px-6 py-4 flex items-center justify-between gap-4 flex-wrap">
+      <div className="border-b bg-background px-6 py-4 flex items-center justify-between gap-4 flex-wrap sticky top-0 z-20">
         <div>
           <div className="flex items-center gap-2.5">
             <h1 className="text-lg font-bold">Campaigns</h1>
@@ -298,6 +326,14 @@ export default function CampaignsPage() {
             <Download className="w-3.5 h-3.5" />
             CSV
           </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-8 gap-1.5 text-xs"
+            onClick={() => setSettingsOpen(true)}
+          >
+            <Settings className="w-3.5 h-3.5" />
+          </Button>
         </div>
       </div>
 
@@ -329,7 +365,7 @@ export default function CampaignsPage() {
       )}
 
       {/* Toolbar */}
-      <div className="border-b bg-background/80 backdrop-blur-sm px-6 py-3 flex items-center gap-3 flex-wrap sticky top-0 z-10">
+      <div className="border-b bg-background/80 backdrop-blur-sm px-6 py-3 flex items-center gap-3 flex-wrap sticky top-[57px] z-10">
         <DateRangePicker
           preset={preset}
           range={dateRange}
@@ -344,7 +380,7 @@ export default function CampaignsPage() {
       </div>
 
       {/* Body */}
-      <div className="flex-1 px-6 py-5 space-y-4">
+      <div className="flex-1 overflow-hidden flex flex-col px-6 py-4 gap-4">
         {campaignsLoading && campaigns.length === 0 ? (
           <>
             <PerfSummarySkeleton />
@@ -353,21 +389,39 @@ export default function CampaignsPage() {
         ) : (
           <>
             <PerfSummary campaigns={filtered} metricsLoading={metricsLoading} />
-            <CampaignFiltersBar
-              filters={filters}
-              onChange={setFilters}
-              selectedCount={selectedIds.size}
-              totalCount={filtered.length}
-            />
-            <CampaignTable
-              campaigns={filtered}
-              selectedIds={selectedIds}
-              onSelectionChange={setSelectedIds}
-              onSuggestionAction={handleSuggestionAction}
-            />
+            {/* Table — fills remaining height (internal scrollbar built-in) */}
+            <div className="flex-1 flex flex-col min-h-0">
+              <CampaignTable
+                campaigns={filtered}
+                selectedIds={selectedIds}
+                onSelectionChange={setSelectedIds}
+                metricsLoading={metricsLoading}
+                metricsAvailable={metricsAvailable}
+                dateFrom={dateRange.from.toISOString().split("T")[0]}
+                dateTo={dateRange.to.toISOString().split("T")[0]}
+                profileId={selectedProfile || undefined}
+                placementData={placementData}
+                onSuggestionAction={handleSuggestionAction}
+              />
+            </div>
           </>
         )}
       </div>
+
+      {/* Cache Settings Modal */}
+      <CacheSettingsModal
+        open={settingsOpen}
+        onOpenChange={setSettingsOpen}
+        currentDataSource={dataSource}
+        currentMetricsAvailable={metricsAvailable}
+        currentMetricsLoading={metricsLoading}
+        currentDateLabel={
+          preset === "custom"
+            ? `${dateRange.from.toLocaleDateString()} – ${dateRange.to.toLocaleDateString()}`
+            : preset === "7d" ? "Last 7 Days" : preset === "14d" ? "Last 14 Days" : "Last 30 Days"
+        }
+        onClearCache={refresh}
+      />
     </div>
   );
 }
