@@ -55,6 +55,18 @@ export function confidenceBadgeVariant(
   return "outline";
 }
 
+/**
+ * Format a Date as YYYY-MM-DD in local time.
+ * Avoids the timezone bug of `.toISOString().split("T")[0]` which shifts
+ * dates backward when the local timezone is ahead of UTC.
+ */
+export function formatLocalDate(d: Date): string {
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
 export function severityColor(severity: string): string {
   switch (severity) {
     case "critical":

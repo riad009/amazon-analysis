@@ -8,5 +8,14 @@
     "campaignId": "123",
     "suggestionTitle": "Test suggestion",
     "timestamp": "2026-02-26T08:57:27.342Z"
+  },
+  {
+    "id": "gemini-62443039603290-1772700157593-0",
+    "campaignId": "62443039603290",
+    "campaignName": "Wood Carving Set EXACT Match",
+    "suggestionType": "enable_campaign",
+    "suggestionTitle": "Enable Paused Campaign",
+    "action": "approve",
+    "timestamp": "2026-03-05T08:42:51.127Z"
   }
 ]

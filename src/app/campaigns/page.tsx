@@ -1,12 +1,12 @@
 "use client";
 
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useCallback } from "react";
+import Link from "next/link";
 import { MOCK_CHANGE_EVENTS } from "@/lib/mock-data";
 import { Campaign, CampaignFilters, DateRange, DateRangePreset } from "@/lib/types";
 import { DateRangePicker } from "@/components/campaigns/DateRangePicker";
 import { ProductFilter } from "@/components/campaigns/ProductFilter";
 import { CampaignTable } from "@/components/campaigns/CampaignTable";
-import { CacheSettingsModal } from "@/components/campaigns/CacheSettingsModal";
 import { PerfSummary } from "@/components/campaigns/PerfSummary";
 import { CampaignTableSkeleton, PerfSummarySkeleton } from "@/components/campaigns/CampaignTableSkeleton";
 import { Button } from "@/components/ui/button";
@@ -15,29 +15,38 @@ import { subDays, formatDistanceToNow } from "date-fns";
 import {
   Download,
   RefreshCcw,
-  Sparkles,
   Loader2,
-  CheckCircle2,
   AlertCircle,
-  Wifi,
   WifiOff,
   Database,
-  Settings,
-
+  Clock,
+  Info,
 } from "lucide-react";
-import { useAICampaignSuggestions } from "@/hooks/useAI";
+import { useAISingleCampaign } from "@/hooks/useAI";
 import { useAmazonCampaigns, DataSource } from "@/hooks/useAmazonCampaigns";
 import { useAmazonProducts } from "@/hooks/useAmazonProducts";
+import { useToast } from "@/components/ui/toast";
 
-function SourceBadge({ source }: { source: DataSource }) {
+function SourceBadge({ source, dataUpdatedAt }: { source: DataSource; dataUpdatedAt: Date | null }) {
+  if (source === "live" && dataUpdatedAt) {
+    return (
+      <Badge
+        variant="default"
+        className="gap-1.5 text-[10px] bg-emerald-600 hover:bg-emerald-700 text-white"
+      >
+        <Database className="w-3 h-3" />
+        DB · {formatDistanceToNow(dataUpdatedAt, { addSuffix: true })}
+      </Badge>
+    );
+  }
   if (source === "live") {
     return (
       <Badge
         variant="default"
         className="gap-1.5 text-[10px] bg-emerald-600 hover:bg-emerald-700 text-white"
       >
-        <Wifi className="w-3 h-3" />
-        Live API
+        <Database className="w-3 h-3" />
+        From DB
       </Badge>
     );
   }
@@ -68,8 +77,12 @@ export default function CampaignsPage() {
     to: new Date(),
   });
   const [selectedProductId, setSelectedProductId] = useState<string | "All">("All");
-  const [selectedProfile, setSelectedProfile] = useState<string>("");
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [selectedProfile, setSelectedProfile] = useState<string>(() => {
+    if (typeof window !== "undefined") {
+      try { return localStorage.getItem("selectedProfileId") ?? ""; } catch { return ""; }
+    }
+    return "";
+  });
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [filters, setFilters] = useState<CampaignFilters>({
     search: "",
@@ -96,12 +109,13 @@ export default function CampaignsPage() {
     campaigns: rawCampaigns,
     placementData,
     loading: campaignsLoading,
-    metricsLoading,
     error: campaignsError,
     dataSource,
     metricsAvailable,
     refresh,
     lastFetched,
+    dataUpdatedAt,
+    message,
   } = useAmazonCampaigns(dateRange, selectedProfile || undefined);
 
   const { products, campaignProductMap } = useAmazonProducts();
@@ -118,12 +132,25 @@ export default function CampaignsPage() {
     return () => window.removeEventListener("account-changed", handler);
   }, []);
 
-  // Listen for sidebar Settings click
+  // Fallback: if no profile after mount, fetch it directly
   useEffect(() => {
-    const handler = () => setSettingsOpen(true);
-    window.addEventListener("open-cache-settings", handler);
-    return () => window.removeEventListener("open-cache-settings", handler);
-  }, []);
+    if (selectedProfile) return;
+    fetch("/api/amazon/profiles")
+      .then((res) => res.json())
+      .then((json) => {
+        if (json.success && Array.isArray(json.data)) {
+          const sellers = json.data.filter(
+            (p: { accountInfo?: { type: string } }) => p.accountInfo?.type === "seller"
+          );
+          if (sellers.length > 0 && !selectedProfile) {
+            const pid = String(sellers[0].profileId);
+            setSelectedProfile(pid);
+            try { localStorage.setItem("selectedProfileId", pid); } catch {}
+          }
+        }
+      })
+      .catch(() => {});
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Local campaign state (with AI suggestions merged in)
   const [campaignOverrides, setCampaignOverrides] = useState<
@@ -134,7 +161,6 @@ export default function CampaignsPage() {
   const campaigns = useMemo(() => {
     return rawCampaigns.map((c) => {
       const override = campaignOverrides.get(c.id);
-      // Tag campaigns with their product ASINs from the mapping
       const productIds = campaignProductMap[c.id] ?? [];
       const base = { ...c, productIds };
       return override ? { ...base, ...override } : base;
@@ -142,12 +168,12 @@ export default function CampaignsPage() {
   }, [rawCampaigns, campaignOverrides, campaignProductMap]);
 
   const [aiError, setAiError] = useState<string | null>(null);
+  const { showToast } = useToast();
 
   const {
-    generate,
-    loading: aiLoading,
-    lastGenerated,
-  } = useAICampaignSuggestions();
+    generateForCampaign,
+    loadingCampaignId: aiLoadingCampaignId,
+  } = useAISingleCampaign();
 
   function handleDateChange(p: DateRangePreset, r: DateRange) {
     setPreset(p);
@@ -208,22 +234,22 @@ export default function CampaignsPage() {
     });
   }
 
-  async function handleGenerateAI() {
+  async function handleGenerateForCampaign(campaignId: string) {
     setAiError(null);
+    const campaign = campaigns.find((c) => c.id === campaignId);
+    if (!campaign) return;
     try {
-      // Send only top 5 campaigns to avoid token limits
-      const topCampaigns = filtered.slice(0, 5);
-      const suggestionMap = await generate(
-        topCampaigns,
+      const suggestions = await generateForCampaign(
+        campaign,
         MOCK_CHANGE_EVENTS,
         dateRange
       );
       setCampaignOverrides((prev) => {
         const next = new Map(prev);
-        for (const [campaignId, suggestions] of suggestionMap) {
-          if (suggestions.length > 0) {
-            next.set(campaignId, { aiSuggestions: suggestions });
-          }
+        if (suggestions.length > 0) {
+          next.set(campaignId, { aiSuggestions: suggestions });
+        } else {
+          next.set(campaignId, { aiSuggestions: [] });
         }
         return next;
       });
@@ -231,6 +257,55 @@ export default function CampaignsPage() {
       setAiError(String(err));
     }
   }
+
+  // ── Campaign field update handler ──
+  const handleUpdateCampaign = useCallback(async (
+    campaignId: string,
+    field: string,
+    value: string | number,
+    extra?: { keywordId?: string }
+  ): Promise<{ success: boolean; error?: string }> => {
+    try {
+      const res = await fetch("/api/amazon/campaigns", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          campaignId,
+          field,
+          value,
+          keywordId: extra?.keywordId,
+          profileId: selectedProfile || undefined,
+        }),
+      });
+
+      const json = await res.json();
+      if (!json.success) {
+        showToast(json.error || "Update failed", "error");
+        return { success: false, error: json.error };
+      }
+
+      // Optimistic UI update
+      setCampaignOverrides((prev) => {
+        const next = new Map(prev);
+        const existing = next.get(campaignId) || {};
+        next.set(campaignId, { ...existing, [field]: value });
+        return next;
+      });
+
+      const fieldLabels: Record<string, string> = {
+        dailyBudget: "Budget",
+        bid: "Bid",
+        status: "Status",
+        biddingStrategy: "Bidding Strategy",
+      };
+      showToast(`${fieldLabels[field] || field} updated successfully`, "success");
+      return { success: true };
+    } catch (err) {
+      const errMsg = String(err);
+      showToast(errMsg, "error");
+      return { success: false, error: errMsg };
+    }
+  }, [selectedProfile, showToast]);
 
   const filtered = useMemo(() => {
     return campaigns.filter((c) => {
@@ -250,12 +325,6 @@ export default function CampaignsPage() {
     });
   }, [campaigns, selectedProductId, filters]);
 
-  const pendingCount = campaigns.reduce(
-    (n, c) =>
-      n + c.aiSuggestions.filter((s) => s.status === "pending").length,
-    0
-  );
-
   return (
     <div className="flex flex-col h-full">
       {/* Page header */}
@@ -263,41 +332,13 @@ export default function CampaignsPage() {
         <div>
           <div className="flex items-center gap-2.5">
             <h1 className="text-lg font-bold">Campaigns</h1>
-            <SourceBadge source={dataSource} />
+            <SourceBadge source={dataSource} dataUpdatedAt={dataUpdatedAt} />
           </div>
           <p className="text-xs text-muted-foreground">
             Sponsored Products · MR – Pool Test Strips (PTS)
           </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
-          {pendingCount > 0 && (
-            <Badge className="gap-1.5 text-xs">
-              <Sparkles className="w-3 h-3" />
-              {pendingCount} AI suggestion{pendingCount !== 1 ? "s" : ""}{" "}
-              pending
-            </Badge>
-          )}
-          {lastGenerated && (
-            <span className="text-[11px] text-muted-foreground flex items-center gap-1">
-              <CheckCircle2 className="w-3 h-3 text-emerald-500" />
-              AI refreshed{" "}
-              {formatDistanceToNow(lastGenerated, { addSuffix: true })}
-            </span>
-          )}
-          <Button
-            variant="default"
-            size="sm"
-            className="h-8 gap-1.5 text-xs"
-            onClick={handleGenerateAI}
-            disabled={aiLoading || campaignsLoading}
-          >
-            {aiLoading ? (
-              <Loader2 className="w-3.5 h-3.5 animate-spin" />
-            ) : (
-              <Sparkles className="w-3.5 h-3.5" />
-            )}
-            {aiLoading ? "Analyzing with Gemini…" : "Refresh AI Suggestions"}
-          </Button>
           <Button
             variant="outline"
             size="sm"
@@ -325,14 +366,6 @@ export default function CampaignsPage() {
           >
             <Download className="w-3.5 h-3.5" />
             CSV
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            className="h-8 gap-1.5 text-xs"
-            onClick={() => setSettingsOpen(true)}
-          >
-            <Settings className="w-3.5 h-3.5" />
           </Button>
         </div>
       </div>
@@ -364,6 +397,38 @@ export default function CampaignsPage() {
         </div>
       )}
 
+      {/* No data banner */}
+      {!campaignsLoading && !campaignsError && campaigns.length === 0 && message && (
+        <div className="mx-6 mt-3 flex items-center gap-2 text-xs text-blue-700 bg-blue-50 border border-blue-200 rounded-lg px-4 py-3">
+          <Info className="w-4 h-4 shrink-0" />
+          <span>{message}</span>
+          <Link
+            href="/manage-data"
+            className="ml-auto font-medium underline whitespace-nowrap"
+          >
+            Go to Manage Data →
+          </Link>
+        </div>
+      )}
+
+      {/* Data age banner */}
+      {!campaignsLoading && dataUpdatedAt && campaigns.length > 0 && (
+        <div className="mx-6 mt-3 flex items-center gap-2 text-xs text-slate-600 bg-slate-50 border border-slate-200 rounded-lg px-4 py-2.5">
+          <Clock className="w-4 h-4 shrink-0 text-slate-500" />
+          <span>
+            Data last fetched from Amazon{" "}
+            <strong>{formatDistanceToNow(dataUpdatedAt, { addSuffix: true })}</strong>
+            {" "}({dataUpdatedAt.toLocaleString()})
+          </span>
+          <Link
+            href="/manage-data"
+            className="ml-auto font-medium text-blue-600 hover:text-blue-700 underline whitespace-nowrap"
+          >
+            Fetch Latest Data
+          </Link>
+        </div>
+      )}
+
       {/* Toolbar */}
       <div className="border-b bg-background/80 backdrop-blur-sm px-6 py-3 flex items-center gap-3 flex-wrap sticky top-[57px] z-10">
         <DateRangePicker
@@ -388,40 +453,27 @@ export default function CampaignsPage() {
           </>
         ) : (
           <>
-            <PerfSummary campaigns={filtered} metricsLoading={metricsLoading} />
+            <PerfSummary campaigns={filtered} />
             {/* Table — fills remaining height (internal scrollbar built-in) */}
             <div className="flex-1 flex flex-col min-h-0">
               <CampaignTable
                 campaigns={filtered}
                 selectedIds={selectedIds}
                 onSelectionChange={setSelectedIds}
-                metricsLoading={metricsLoading}
                 metricsAvailable={metricsAvailable}
-                dateFrom={dateRange.from.toISOString().split("T")[0]}
-                dateTo={dateRange.to.toISOString().split("T")[0]}
+                dateFrom={`${dateRange.from.getFullYear()}-${String(dateRange.from.getMonth()+1).padStart(2,"0")}-${String(dateRange.from.getDate()).padStart(2,"0")}`}
+                dateTo={`${dateRange.to.getFullYear()}-${String(dateRange.to.getMonth()+1).padStart(2,"0")}-${String(dateRange.to.getDate()).padStart(2,"0")}`}
                 profileId={selectedProfile || undefined}
                 placementData={placementData}
                 onSuggestionAction={handleSuggestionAction}
+                onGenerateAI={handleGenerateForCampaign}
+                aiLoadingCampaignId={aiLoadingCampaignId}
+                onUpdateCampaign={handleUpdateCampaign}
               />
             </div>
           </>
         )}
       </div>
-
-      {/* Cache Settings Modal */}
-      <CacheSettingsModal
-        open={settingsOpen}
-        onOpenChange={setSettingsOpen}
-        currentDataSource={dataSource}
-        currentMetricsAvailable={metricsAvailable}
-        currentMetricsLoading={metricsLoading}
-        currentDateLabel={
-          preset === "custom"
-            ? `${dateRange.from.toLocaleDateString()} – ${dateRange.to.toLocaleDateString()}`
-            : preset === "7d" ? "Last 7 Days" : preset === "14d" ? "Last 14 Days" : "Last 30 Days"
-        }
-        onClearCache={refresh}
-      />
     </div>
   );
 }

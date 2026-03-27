@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useMemo, Fragment, useRef, useCallback } from "react";
-import { Campaign, PlacementMetrics, AISuggestion } from "@/lib/types";
+import { Campaign, PlacementMetrics, AISuggestion, BiddingStrategy } from "@/lib/types";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -44,13 +44,33 @@ import {
   Sparkles,
   TrendingUp,
   Loader2,
+  Wand2,
+  Check,
+  X,
+  Pencil,
 } from "lucide-react";
+import { Button } from "@/components/ui/button";
+
+// ─── Editable Field Types ────────────────────────────────────────────────────
+
+type EditableField = "dailyBudget" | "bid" | "status" | "biddingStrategy";
+
+interface EditState {
+  campaignId: string;
+  field: EditableField;
+  value: string;
+  original: string;
+  saving: boolean;
+  error: string | null;
+}
+
+// ─── Props ──────────────────────────────────────────────────────────────────
 
 interface CampaignTableProps {
   campaigns: Campaign[];
   selectedIds: Set<string>;
   onSelectionChange: (ids: Set<string>) => void;
-  metricsLoading?: boolean;
+
   metricsAvailable?: boolean;
   dateFrom?: string;
   dateTo?: string;
@@ -62,6 +82,14 @@ interface CampaignTableProps {
     action: "approve" | "deny" | "modify",
     note?: string
   ) => void;
+  onGenerateAI: (campaignId: string) => void;
+  aiLoadingCampaignId: string | null;
+  onUpdateCampaign?: (
+    campaignId: string,
+    field: EditableField,
+    value: string | number,
+    extra?: { keywordId?: string }
+  ) => Promise<{ success: boolean; error?: string }>;
 }
 
 function MetricSpinner() {
@@ -107,23 +135,45 @@ function Delta({ current, previous, unit, inverseColors }: {
 // Total column count for colSpan
 const TOTAL_COLS = 23; // checkbox + 20 data cols + history + expand
 
+// ─── Bidding Strategy Options ────────────────────────────────────────────────
+
+const BIDDING_STRATEGIES: BiddingStrategy[] = [
+  "Fixed Bid",
+  "Dynamic Bids - Down Only",
+  "Dynamic Bids - Up and Down",
+];
+
+const BIDDING_SHORT: Record<string, string> = {
+  "Fixed Bid": "Fixed",
+  "Dynamic Bids - Down Only": "Down Only",
+  "Dynamic Bids - Up and Down": "Up & Down",
+};
+
+// ─── Component ──────────────────────────────────────────────────────────────
+
 export function CampaignTable({
   campaigns,
   selectedIds,
   onSelectionChange,
-  metricsLoading,
+
   metricsAvailable,
   dateFrom,
   dateTo,
   profileId,
   placementData,
   onSuggestionAction,
+  onGenerateAI,
+  aiLoadingCampaignId,
+  onUpdateCampaign,
 }: CampaignTableProps) {
   const [sortKey, setSortKey] = useState<SortKey>("acos");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [columnFilters, setColumnFilters] = useState<Map<string, ColumnFilterState>>(new Map());
   const [activeFilterCol, setActiveFilterCol] = useState<string | null>(null);
+
+  // ── Edit state ──
+  const [editState, setEditState] = useState<EditState | null>(null);
 
   // ── Internal horizontal scroll tracking ──
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
@@ -231,6 +281,88 @@ export function CampaignTable({
     });
   }
 
+  // ── Edit handlers ──
+
+  function startEdit(campaignId: string, field: EditableField, currentValue: string) {
+    if (editState?.saving) return; // Don't allow switching while saving
+    setEditState({
+      campaignId,
+      field,
+      value: currentValue,
+      original: currentValue,
+      saving: false,
+      error: null,
+    });
+  }
+
+  function cancelEdit() {
+    if (editState?.saving) return;
+    setEditState(null);
+  }
+
+  function updateEditValue(value: string) {
+    if (!editState) return;
+    setEditState({ ...editState, value, error: null });
+  }
+
+  function validateEdit(): string | null {
+    if (!editState) return "No edit in progress";
+    const { field, value } = editState;
+
+    if (field === "dailyBudget") {
+      const n = Number(value);
+      if (isNaN(n) || value.trim() === "") return "Budget is required";
+      if (n <= 0) return "Budget must be > $0";
+      return null;
+    }
+    if (field === "bid") {
+      const n = Number(value);
+      if (isNaN(n) || value.trim() === "") return "Bid is required";
+      if (n < 0.02) return "Bid must be ≥ $0.02";
+      return null;
+    }
+    // status and biddingStrategy are selected from predefined options, always valid
+    return null;
+  }
+
+  async function saveEdit() {
+    if (!editState || !onUpdateCampaign) return;
+    const validationError = validateEdit();
+    if (validationError) {
+      setEditState({ ...editState, error: validationError });
+      return;
+    }
+
+    // Don't save if value unchanged
+    if (editState.value === editState.original) {
+      setEditState(null);
+      return;
+    }
+
+    setEditState({ ...editState, saving: true, error: null });
+
+    const campaign = campaigns.find((c) => c.id === editState.campaignId);
+    const extra = editState.field === "bid" ? { keywordId: campaign?.keywordId } : undefined;
+    const value = (editState.field === "dailyBudget" || editState.field === "bid")
+      ? Number(editState.value)
+      : editState.value;
+
+    try {
+      const result = await onUpdateCampaign(editState.campaignId, editState.field, value, extra);
+      if (result.success) {
+        setEditState(null);
+      } else {
+        setEditState({ ...editState, saving: false, error: result.error || "Update failed" });
+      }
+    } catch (err) {
+      setEditState({ ...editState, saving: false, error: String(err) });
+    }
+  }
+
+  function isEditing(campaignId: string, field: EditableField): boolean {
+    return editState?.campaignId === campaignId && editState?.field === field;
+  }
+
   // sortable header helper
   function SortableHead({ sortKey: sk, label, align, tooltip, minW }: {
     sortKey: SortKey; label: string; align?: "right"; tooltip?: string; minW?: string;
@@ -288,6 +420,194 @@ export function CampaignTable({
           </ColumnFilterDropdown>
         )}
       </TableHead>
+    );
+  }
+
+  // ── Editable cell renderers ──
+
+  function EditableNumberCell({
+    campaignId, field, value, prefix = "$"
+  }: {
+    campaignId: string; field: EditableField; value: number; prefix?: string;
+  }) {
+    const editing = isEditing(campaignId, field);
+    const canEdit = !!onUpdateCampaign;
+
+    if (editing && editState) {
+      return (
+        <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+          <div className="relative">
+            <span className="absolute left-1.5 top-1/2 -translate-y-1/2 text-muted-foreground text-[10px]">{prefix}</span>
+            <input
+              type="number"
+              step="0.01"
+              min={field === "bid" ? "0.02" : "0.01"}
+              value={editState.value}
+              onChange={(e) => updateEditValue(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") saveEdit();
+                if (e.key === "Escape") cancelEdit();
+              }}
+              autoFocus
+              disabled={editState.saving}
+              className={`w-[80px] h-6 text-xs font-mono pl-4 pr-1 rounded border bg-background focus:outline-none focus:ring-1 focus:ring-primary ${editState.error ? "border-red-400 focus:ring-red-400" : "border-input"
+                } ${editState.saving ? "opacity-50" : ""}`}
+            />
+          </div>
+          {editState.saving ? (
+            <Loader2 className="w-3.5 h-3.5 animate-spin text-primary" />
+          ) : (
+            <>
+              <button onClick={saveEdit} className="text-emerald-600 hover:text-emerald-700" title="Save">
+                <Check className="w-3.5 h-3.5" />
+              </button>
+              <button onClick={cancelEdit} className="text-muted-foreground hover:text-foreground" title="Cancel">
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </>
+          )}
+          {editState.error && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span className="text-red-500 text-[9px]">!</span>
+              </TooltipTrigger>
+              <TooltipContent className="text-red-600 text-xs">{editState.error}</TooltipContent>
+            </Tooltip>
+          )}
+        </div>
+      );
+    }
+
+    return (
+      <span
+        className={`font-mono ${canEdit ? "group/edit cursor-pointer hover:text-primary transition-colors" : ""} ${field === "bid" && value > 0 ? "font-semibold text-emerald-600" : ""
+          }`}
+        onClick={canEdit ? () => startEdit(campaignId, field, String(value)) : undefined}
+        title={canEdit ? "Click to edit" : undefined}
+      >
+        {field === "bid" && value <= 0 ? (
+          <span className="text-muted-foreground">—</span>
+        ) : (
+          <>
+            {formatCurrency(value)}
+            {canEdit && (
+              <Pencil className="w-2.5 h-2.5 ml-1 inline opacity-0 group-hover/edit:opacity-50 transition-opacity" />
+            )}
+          </>
+        )}
+      </span>
+    );
+  }
+
+  function EditableStatusCell({ campaignId, campaign }: { campaignId: string; campaign: Campaign }) {
+    const editing = isEditing(campaignId, "status");
+    const canEdit = !!onUpdateCampaign;
+
+    if (editing && editState) {
+      return (
+        <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+          <select
+            value={editState.value}
+            onChange={async (e) => {
+              const newVal = e.target.value;
+              if (newVal === editState.original) {
+                setEditState(null);
+                return;
+              }
+              setEditState({ ...editState, value: newVal, saving: true });
+              if (onUpdateCampaign) {
+                const result = await onUpdateCampaign(campaignId, "status", newVal);
+                if (result.success) {
+                  setEditState(null);
+                } else {
+                  setEditState({ ...editState, value: newVal, saving: false, error: result.error || "Failed" });
+                }
+              }
+            }}
+            autoFocus
+            disabled={editState.saving}
+            className="h-6 text-xs rounded border border-input bg-background px-1.5 focus:outline-none focus:ring-1 focus:ring-primary"
+          >
+            <option value="Enabled">Enabled</option>
+            <option value="Paused">Paused</option>
+          </select>
+          {editState.saving ? (
+            <Loader2 className="w-3.5 h-3.5 animate-spin text-primary" />
+          ) : (
+            <button onClick={cancelEdit} className="text-muted-foreground hover:text-foreground" title="Cancel">
+              <X className="w-3.5 h-3.5" />
+            </button>
+          )}
+        </div>
+      );
+    }
+
+    return (
+      <span
+        className={`inline-flex items-center gap-0.5 ${campaign.status === "Enabled" ? "text-emerald-600" : "text-muted-foreground"} ${canEdit ? "cursor-pointer hover:opacity-70 transition-opacity" : ""}`}
+        onClick={canEdit ? () => startEdit(campaignId, "status", campaign.status) : undefined}
+        title={canEdit ? "Click to change status" : undefined}
+      >
+        <span className={`w-1.5 h-1.5 rounded-full inline-block ${campaign.status === "Enabled" ? "bg-emerald-500" : "bg-muted-foreground"}`} />
+        {campaign.status}
+        {canEdit && <Pencil className="w-2 h-2 ml-0.5 opacity-0 group-hover/status:opacity-40" />}
+      </span>
+    );
+  }
+
+  function EditableBiddingCell({ campaignId, campaign }: { campaignId: string; campaign: Campaign }) {
+    const editing = isEditing(campaignId, "biddingStrategy");
+    const canEdit = !!onUpdateCampaign;
+
+    if (editing && editState) {
+      return (
+        <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+          <select
+            value={editState.value}
+            onChange={async (e) => {
+              const newVal = e.target.value;
+              if (newVal === editState.original) {
+                setEditState(null);
+                return;
+              }
+              setEditState({ ...editState, value: newVal, saving: true });
+              if (onUpdateCampaign) {
+                const result = await onUpdateCampaign(campaignId, "biddingStrategy", newVal);
+                if (result.success) {
+                  setEditState(null);
+                } else {
+                  setEditState({ ...editState, value: newVal, saving: false, error: result.error || "Failed" });
+                }
+              }
+            }}
+            autoFocus
+            disabled={editState.saving}
+            className="h-6 text-xs rounded border border-input bg-background px-1.5 focus:outline-none focus:ring-1 focus:ring-primary"
+          >
+            {BIDDING_STRATEGIES.map((s) => (
+              <option key={s} value={s}>{BIDDING_SHORT[s]}</option>
+            ))}
+          </select>
+          {editState.saving ? (
+            <Loader2 className="w-3.5 h-3.5 animate-spin text-primary" />
+          ) : (
+            <button onClick={cancelEdit} className="text-muted-foreground hover:text-foreground" title="Cancel">
+              <X className="w-3.5 h-3.5" />
+            </button>
+          )}
+        </div>
+      );
+    }
+
+    return (
+      <span
+        className={`text-muted-foreground whitespace-nowrap ${canEdit ? "cursor-pointer hover:text-foreground transition-colors" : ""}`}
+        onClick={canEdit ? () => startEdit(campaignId, "biddingStrategy", campaign.biddingStrategy) : undefined}
+        title={canEdit ? "Click to change bidding strategy" : undefined}
+      >
+        {BIDDING_SHORT[campaign.biddingStrategy] ?? campaign.biddingStrategy}
+        {canEdit && <Pencil className="w-2 h-2 ml-0.5 inline opacity-0 group-hover:opacity-40" />}
+      </span>
     );
   }
 
@@ -371,12 +691,9 @@ export function CampaignTable({
                         <p className="font-medium text-foreground max-w-[230px] truncate" title={c.name}>
                           {c.name}
                         </p>
-                        <p className="text-muted-foreground text-[10px]">
+                        <p className="text-muted-foreground text-[10px] group/status">
                           {c.type} ·{" "}
-                          <span className={`inline-flex items-center gap-0.5 ${c.status === "Enabled" ? "text-emerald-600" : "text-muted-foreground"}`}>
-                            <span className={`w-1.5 h-1.5 rounded-full inline-block ${c.status === "Enabled" ? "bg-emerald-500" : "bg-muted-foreground"}`} />
-                            {c.status}
-                          </span>
+                          <EditableStatusCell campaignId={c.id} campaign={c} />
                         </p>
                       </div>
                     </TableCell>
@@ -391,16 +708,14 @@ export function CampaignTable({
                       </span>
                     </TableCell>
 
-                    {/* 4. Budget */}
+                    {/* 4. Budget — EDITABLE */}
                     <TableCell className="text-right">
-                      <span className="font-mono">{formatCurrency(c.dailyBudget)}</span>
+                      <EditableNumberCell campaignId={c.id} field="dailyBudget" value={c.dailyBudget} />
                     </TableCell>
 
-                    {/* 5. Bidding */}
+                    {/* 5. Bidding — EDITABLE */}
                     <TableCell>
-                      <span className="text-muted-foreground whitespace-nowrap">
-                        {c.biddingStrategy === "Fixed Bid" ? "Fixed" : c.biddingStrategy === "Dynamic Bids - Down Only" ? "Down Only" : "Up & Down"}
-                      </span>
+                      <EditableBiddingCell campaignId={c.id} campaign={c} />
                     </TableCell>
 
                     {/* 6. TOS IS */}
@@ -450,68 +765,64 @@ export function CampaignTable({
                       )}
                     </TableCell>
 
-                    {/* 9. Bid */}
+                    {/* 9. Bid — EDITABLE */}
                     <TableCell className="text-right">
-                      {c.bid > 0 ? (
-                        <span className="font-mono font-semibold text-emerald-600">{formatCurrency(c.bid)}</span>
-                      ) : (
-                        <span className="text-muted-foreground">—</span>
-                      )}
+                      <EditableNumberCell campaignId={c.id} field="bid" value={c.bid} />
                     </TableCell>
 
                     {/* 10. CPC */}
                     <TableCell className="text-right font-mono text-muted-foreground">
-                      {!metricsAvailable ? <MetricSpinner /> : formatCurrency(c.cpc)}
+                      {formatCurrency(c.cpc)}
                     </TableCell>
 
                     {/* 11. Clicks */}
                     <TableCell className="text-right font-mono">
-                      {!metricsAvailable ? <MetricSpinner /> : <>{formatNumber(c.clicks)}<Delta current={c.clicks} previous={c.prevClicks} /></>}
+                      <>{formatNumber(c.clicks)}<Delta current={c.clicks} previous={c.prevClicks} /></>
                     </TableCell>
 
                     {/* 12. Orders */}
                     <TableCell className="text-right font-mono">
-                      {!metricsAvailable ? <MetricSpinner /> : <>{formatNumber(c.orders)}<Delta current={c.orders} previous={c.prevOrders} /></>}
+                      <>{formatNumber(c.orders)}<Delta current={c.orders} previous={c.prevOrders} /></>
                     </TableCell>
 
                     {/* 13. ACOS */}
-                    <TableCell className={`text-right font-mono font-semibold ${!metricsAvailable ? "" : acosColor(c.acos)}`}>
-                      {!metricsAvailable ? <MetricSpinner /> : <>{formatPercent(c.acos)}<Delta current={c.acos} previous={c.prevAcos} inverseColors /></>}
+                    <TableCell className={`text-right font-mono font-semibold ${acosColor(c.acos)}`}>
+                      <>{formatPercent(c.acos)}<Delta current={c.acos} previous={c.prevAcos} inverseColors /></>
                     </TableCell>
 
                     {/* 14. Conversion */}
                     <TableCell className="text-right font-mono">
-                      {!metricsAvailable ? <MetricSpinner /> : formatPercent(c.conversion)}
+                      {formatPercent(c.conversion)}
                     </TableCell>
 
                     {/* 15. Spend */}
                     <TableCell className="text-right font-mono">
-                      {!metricsAvailable ? <MetricSpinner /> : <>{formatCurrency(c.spend)}<Delta current={c.spend} previous={c.prevSpend} inverseColors /></>}
+                      <>{formatCurrency(c.spend)}<Delta current={c.spend} previous={c.prevSpend} inverseColors /></>
                     </TableCell>
 
                     {/* 16. Sales */}
                     <TableCell className="text-right font-mono">
-                      {!metricsAvailable ? <MetricSpinner /> : <>{formatCurrency(c.sales)}<Delta current={c.sales} previous={c.prevSales} /></>}
+                      <>{formatCurrency(c.sales)}<Delta current={c.sales} previous={c.prevSales} /></>
                     </TableCell>
 
                     {/* 17. Impressions */}
                     <TableCell className="text-right font-mono">
-                      {!metricsAvailable ? <MetricSpinner /> : <>{formatNumber(c.impressions)}<Delta current={c.impressions} previous={c.prevImpressions} /></>}
+                      <>{formatNumber(c.impressions)}<Delta current={c.impressions} previous={c.prevImpressions} /></>
                     </TableCell>
 
                     {/* 18. Units */}
                     <TableCell className="text-right font-mono">
-                      {!metricsAvailable ? <MetricSpinner /> : formatNumber(c.units)}
+                      {formatNumber(c.units)}
                     </TableCell>
 
                     {/* 19. CTR */}
                     <TableCell className="text-right font-mono text-muted-foreground">
-                      {!metricsAvailable ? <MetricSpinner /> : formatPercent(c.ctr)}
+                      {formatPercent(c.ctr)}
                     </TableCell>
 
                     {/* 20. ROAS */}
-                    <TableCell className={`text-right font-mono font-semibold ${!metricsAvailable ? "" : roasColor(c.roas)}`}>
-                      {!metricsAvailable ? <MetricSpinner /> : <>{c.roas.toFixed(2)}x<Delta current={c.roas} previous={c.prevRoas} /></>}
+                    <TableCell className={`text-right font-mono font-semibold ${roasColor(c.roas)}`}>
+                      <>{c.roas.toFixed(2)}x<Delta current={c.roas} previous={c.prevRoas} /></>
                     </TableCell>
 
                     {/* 21. History */}
@@ -526,7 +837,17 @@ export function CampaignTable({
 
                     {/* 22. AI Suggestion / Expand */}
                     <TableCell>
-                      {pendingSuggestions.length > 0 ? (
+                      {aiLoadingCampaignId === c.id ? (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-7 text-xs gap-1.5 pointer-events-none"
+                          disabled
+                        >
+                          <Loader2 className="w-3.5 h-3.5 animate-spin text-primary" />
+                          <span className="text-muted-foreground">Analyzing…</span>
+                        </Button>
+                      ) : pendingSuggestions.length > 0 ? (
                         <Tooltip>
                           <TooltipTrigger asChild>
                             <button
@@ -542,14 +863,16 @@ export function CampaignTable({
                           <TooltipContent>View AI suggestions</TooltipContent>
                         </Tooltip>
                       ) : (
-                        <button
-                          onClick={() => setExpandedId(isExpanded ? null : c.id)}
-                          className="text-muted-foreground hover:text-foreground transition-colors"
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-7 text-xs gap-1.5 border-primary/30 hover:border-primary hover:bg-primary/5 transition-all"
+                          onClick={() => onGenerateAI(c.id)}
+                          disabled={!!aiLoadingCampaignId}
                         >
-                          <ChevronRight
-                            className={`w-4 h-4 transition-transform ${isExpanded ? "rotate-90" : ""}`}
-                          />
-                        </button>
+                          <Wand2 className="w-3 h-3 text-primary" />
+                          AI Suggest
+                        </Button>
                       )}
                     </TableCell>
                   </TableRow>

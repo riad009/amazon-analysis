@@ -541,3 +541,104 @@ export async function fetchProductAds(profileId?: string): Promise<RawProductAd[
 
   return allAds;
 }
+
+// ─── Campaign Updates ───────────────────────────────────────────────────────
+
+export interface UpdateCampaignParams {
+  campaignId: string;
+  budget?: number;
+  status?: "ENABLED" | "PAUSED";
+  biddingStrategy?: string;
+}
+
+export async function updateCampaign(
+  params: UpdateCampaignParams,
+  profileId?: string
+): Promise<{ success: boolean; error?: string }> {
+  const config = getConfig(profileId);
+  if (!config) throw new Error("Amazon Ads credentials not configured");
+
+  const campaign: Record<string, unknown> = {
+    campaignId: Number(params.campaignId),
+  };
+
+  if (params.budget != null) {
+    campaign.budget = { budget: params.budget, budgetType: "DAILY" };
+  }
+  if (params.status != null) {
+    campaign.state = params.status;
+  }
+  if (params.biddingStrategy != null) {
+    const strategyMap: Record<string, string> = {
+      "Fixed Bid": "LEGACY_FOR_SALES",
+      "Dynamic Bids - Down Only": "AUTO_FOR_SALES",
+      "Dynamic Bids - Up and Down": "RULE_BASED",
+    };
+    campaign.dynamicBidding = {
+      strategy: strategyMap[params.biddingStrategy] ?? "LEGACY_FOR_SALES",
+    };
+  }
+
+  console.log(`[ADS Update] Updating campaign ${params.campaignId}:`, JSON.stringify(campaign));
+
+  const res = await adsRequest("/sp/campaigns", config, {
+    method: "PUT",
+    body: JSON.stringify({ campaigns: [campaign] }),
+    contentType: "application/vnd.spCampaign.v3+json",
+    accept: "application/vnd.spCampaign.v3+json",
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    console.error(`[ADS Update] Campaign update failed (${res.status}):`, text);
+    return { success: false, error: `API error (${res.status}): ${text}` };
+  }
+
+  const data = await res.json();
+  const result = data?.campaigns?.[0];
+  if (result?.errors?.length > 0) {
+    const errMsg = result.errors.map((e: { errorType?: string; message?: string }) => e.message || e.errorType).join("; ");
+    return { success: false, error: errMsg };
+  }
+
+  console.log(`[ADS Update] ✅ Campaign ${params.campaignId} updated successfully`);
+  return { success: true };
+}
+
+// ─── Keyword Bid Update ─────────────────────────────────────────────────────
+
+export async function updateKeywordBid(
+  keywordId: string,
+  bid: number,
+  profileId?: string
+): Promise<{ success: boolean; error?: string }> {
+  const config = getConfig(profileId);
+  if (!config) throw new Error("Amazon Ads credentials not configured");
+
+  console.log(`[ADS Update] Updating keyword ${keywordId} bid to ${bid}`);
+
+  const res = await adsRequest("/sp/keywords", config, {
+    method: "PUT",
+    body: JSON.stringify({
+      keywords: [{ keywordId: Number(keywordId), bid }],
+    }),
+    contentType: "application/vnd.spKeyword.v3+json",
+    accept: "application/vnd.spKeyword.v3+json",
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    console.error(`[ADS Update] Keyword bid update failed (${res.status}):`, text);
+    return { success: false, error: `API error (${res.status}): ${text}` };
+  }
+
+  const data = await res.json();
+  const result = data?.keywords?.[0];
+  if (result?.errors?.length > 0) {
+    const errMsg = result.errors.map((e: { errorType?: string; message?: string }) => e.message || e.errorType).join("; ");
+    return { success: false, error: errMsg };
+  }
+
+  console.log(`[ADS Update] ✅ Keyword ${keywordId} bid updated to $${bid}`);
+  return { success: true };
+}

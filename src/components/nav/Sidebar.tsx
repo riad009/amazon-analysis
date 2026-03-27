@@ -8,7 +8,8 @@ import {
   BarChart3,
   Lightbulb,
   TrendingUp,
-  Settings,
+  Database,
+  Bell,
   ChevronRight,
   ChevronDown,
 } from "lucide-react";
@@ -32,7 +33,20 @@ const NAV_ITEMS = [
     icon: Lightbulb,
     description: "Timeline-aware AI analysis",
   },
+  {
+    href: "/notifications",
+    label: "Notifications",
+    icon: Bell,
+    description: "Email alerts & schedule",
+  },
+  {
+    href: "/manage-data",
+    label: "Manage Data",
+    icon: Database,
+    description: "Fetch schedule & history",
+  },
 ];
+
 
 export function Sidebar() {
   const pathname = usePathname();
@@ -51,6 +65,15 @@ export function Sidebar() {
           setProfiles(sellers);
           if (sellers.length > 0) {
             setSelectedProfile(sellers[0]);
+            const pid = String(sellers[0].profileId);
+            // Persist so other pages can read it on mount
+            try { localStorage.setItem("selectedProfileId", pid); } catch {}
+            // Fire initial account selection so CampaignsPage knows which profile to load
+            window.dispatchEvent(
+              new CustomEvent("account-changed", {
+                detail: { profileId: pid, name: sellers[0].accountInfo.name },
+              })
+            );
           }
         }
       })
@@ -60,10 +83,12 @@ export function Sidebar() {
   function handleSelectAccount(profile: AccountProfile) {
     setSelectedProfile(profile);
     setDropdownOpen(false);
+    const pid = String(profile.profileId);
+    try { localStorage.setItem("selectedProfileId", pid); } catch {}
     // Notify campaigns page about account change
     window.dispatchEvent(
       new CustomEvent("account-changed", {
-        detail: { profileId: String(profile.profileId), name: profile.accountInfo.name },
+        detail: { profileId: pid, name: profile.accountInfo.name },
       })
     );
   }
@@ -172,13 +197,6 @@ export function Sidebar() {
 
       {/* Footer */}
       <div className="px-4 py-3 border-t space-y-2">
-        <button
-          className="flex items-center gap-2 text-xs text-muted-foreground hover:text-foreground transition-colors w-full"
-          onClick={() => window.dispatchEvent(new CustomEvent("open-cache-settings"))}
-        >
-          <Settings className="w-3.5 h-3.5" />
-          Settings
-        </button>
         <p className="text-[10px] text-muted-foreground leading-tight">Powered by</p>
         <p className="text-sm font-bold text-foreground tracking-tight">Dra Soft</p>
       </div>

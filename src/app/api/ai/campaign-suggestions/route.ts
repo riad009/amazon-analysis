@@ -6,30 +6,62 @@ import path from "path";
 
 const FEEDBACK_FILE = path.join(process.cwd(), "data", "ai-feedback.json");
 
-const SYSTEM_PROMPT = `You are an expert Amazon PPC (Pay-Per-Click) advertising analyst. 
+const SYSTEM_PROMPT = `You are an expert Amazon PPC (Pay-Per-Click) advertising analyst.
 You think like a senior PPC manager with 10+ years of experience optimizing Sponsored Products campaigns.
 
-Your job is to analyze campaign performance data across two time periods, detect changes in the change history, 
-and generate STRUCTURED, ACTIONABLE suggestions for each campaign.
+Your job is to analyze a SINGLE campaign's performance data across two time periods, detect changes,
+and generate STRUCTURED, ACTIONABLE suggestions.
+
+## Detection Rules — Think Like a Human PPC Manager
+
+### 1. Performance Changes Over Time
+- Compare current vs previous period metrics: impressions, clicks, orders, sales, ACOS, ROAS, CPC, CTR
+- Flag ANY metric that changed more than ±15%
+
+### 2. Root Cause Attribution — Was it US or the MARKET?
+- If a bid or budget change exists in the change history within the date range, and performance shifted AFTER that change → likely caused by OUR ACTION
+- If no bid/budget change exists but performance shifted → likely MARKET driven (competition, seasonality, algorithm change)
+- Always state which one: "Caused by: seller action (bid decrease on [date])" or "Caused by: market shift"
+
+### 3. Side Effects Detection
+- **Over-optimization**: ACOS improved but clicks/orders/sales dropped significantly → we cut too much
+- **Top of Search Loss**: After a bid decrease, TOS IS (Top of Search Impression Share) dropped → lost premium placement
+- **Volume collapse**: Spend went down AND sales went down proportionally or more → not saving money, just losing volume
+- **Budget capping**: High CTR, good conversion, but impressions plateau or drop → budget too low
+
+### 4. Actionable Insight Categories
+- "Campaign losing Top of Search after bid decrease" → recommend partial bid restoration
+- "Previously strong campaign now declining" → recommend investigation + possible bid increase
+- "ACOS improved but volume collapsed (over-optimized)" → recommend partial bid/budget restoration
+- "Dying campaign with falling impression share" → recommend pause or aggressive bid increase
+- "Strong performer with room to scale" → recommend budget increase
+
+## Output Per Suggestion
+Each suggestion MUST include:
+- What changed (specific metrics with % changes)
+- Likely cause (seller action or market, with evidence)
+- Clear recommended action (e.g., "raise bid from $1.20 to $1.40–$1.50")
+- Confidence level (High/Medium/Low based on data strength)
 
 Rules:
 1. Always explain WHY you're making a suggestion (data-driven reasoning).
-2. Detect if a performance change was caused by a USER ACTION (bid/budget change) or by the MARKET.
-3. Warn about over-optimization (ACOS improved but volume collapsed).
-4. Warn about Top of Search loss (impressions drop sharply after bid decrease).
-5. Scale winning campaigns (high ROAS + low spend = underutilized budget).
-6. Be conservative: prefer partial bid adjustments over extreme changes.
-7. Return only valid JSON.`;
+2. Be conservative: prefer partial adjustments over extreme changes.
+3. Return only valid JSON.`;
 
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json() as {
-      campaigns: Campaign[];
+      campaign: Campaign;
       changeEvents: ChangeEvent[];
       dateRange: { from: string; to: string };
     };
 
-    const { campaigns, changeEvents, dateRange } = body;
+    const { campaign, changeEvents, dateRange } = body;
+
+    // Filter change events to only this campaign
+    const campaignChanges = changeEvents.filter(
+      (e) => e.campaignId === campaign.id
+    );
 
     // Load past feedback for AI learning
     let feedbackContext = "";
@@ -68,79 +100,82 @@ IMPORTANT: Based on this feedback, adjust your suggestions. If the seller denied
 ## Date Range
 Current period: ${dateRange.from} to ${dateRange.to}
 
-## Recent Change History (bid/budget/status changes made by seller)
-${JSON.stringify(changeEvents, null, 2)}
+## Recent Change History for This Campaign
+${campaignChanges.length > 0
+        ? JSON.stringify(campaignChanges, null, 2)
+        : "No recent bid/budget/status changes recorded for this campaign."
+      }
 
 ## Campaign Performance Data
 ${JSON.stringify(
-      campaigns.map((c) => ({
-        id: c.id,
-        name: c.name,
-        type: c.type,
-        status: c.status,
-        dailyBudget: c.dailyBudget,
-        biddingStrategy: c.biddingStrategy,
-        // Current period
-        current: {
-          impressions: c.impressions,
-          clicks: c.clicks,
-          orders: c.orders,
-          units: c.units,
-          sales: c.sales,
-          spend: c.spend,
-          cpc: c.cpc,
-          ctr: c.ctr,
-          acos: c.acos,
-          roas: c.roas,
-          conversionRate: c.conversion,
+        {
+          id: campaign.id,
+          name: campaign.name,
+          type: campaign.type,
+          status: campaign.status,
+          dailyBudget: campaign.dailyBudget,
+          biddingStrategy: campaign.biddingStrategy,
+          keyword: campaign.keyword,
+          bid: campaign.bid,
+          placement: campaign.placement,
+          placementBidTOS: campaign.placementBidTOS,
+          placementBidPP: campaign.placementBidPP,
+          tosIS: campaign.tosIS,
+          current: {
+            impressions: campaign.impressions,
+            clicks: campaign.clicks,
+            orders: campaign.orders,
+            units: campaign.units,
+            sales: campaign.sales,
+            spend: campaign.spend,
+            cpc: campaign.cpc,
+            ctr: campaign.ctr,
+            acos: campaign.acos,
+            roas: campaign.roas,
+            conversionRate: campaign.conversion,
+          },
+          previous: {
+            impressions: campaign.prevImpressions,
+            clicks: campaign.prevClicks,
+            orders: campaign.prevOrders,
+            sales: campaign.prevSales,
+            spend: campaign.prevSpend,
+            acos: campaign.prevAcos,
+            roas: campaign.prevRoas,
+          },
         },
-        // Previous period
-        previous: {
-          impressions: c.prevImpressions,
-          clicks: c.prevClicks,
-          orders: c.prevOrders,
-          sales: c.prevSales,
-          spend: c.prevSpend,
-          acos: c.prevAcos,
-          roas: c.prevRoas,
-        },
-      })),
-      null,
-      2
-    )}
+        null,
+        2
+      )}
 
 ## Instructions
-For EACH campaign, analyze:
-1. Current vs previous period metrics — calculate % changes
-2. Whether any change event correlates with a performance shift
-3. What the likely cause is (seller action vs market)
-4. What the best action is (with specific numbers)
+Analyze this single campaign deeply:
+1. Current vs previous period metrics — calculate exact % changes for each metric
+2. Whether any change event correlates with a performance shift (root cause)
+3. Whether the change was caused by seller action or market forces
+4. Check for side effects: over-optimization, TOS loss, volume collapse, budget capping
+5. What the best action is (with specific numbers)
 
 Return a JSON object with this exact structure:
 {
-  "campaignSuggestions": [
+  "suggestions": [
     {
-      "campaignId": "string",
-      "suggestions": [
-        {
-          "type": "raise_bid" | "lower_bid" | "increase_budget" | "decrease_budget" | "pause_campaign" | "enable_campaign" | "add_negative_keyword" | "adjust_placement",
-          "title": "short title (max 10 words)",
-          "description": "1-2 sentence description",
-          "rationale": "data-driven explanation referencing specific metrics and changes",
-          "impact": "estimated outcome (e.g. 'Est. ACOS improvement from 70% to 50-55%')",
-          "confidence": "High" | "Medium" | "Low",
-          "currentValue": number | null,
-          "recommendedValue": number | null,
-          "unit": "$" | "%" | null
-        }
-      ]
+      "type": "raise_bid" | "lower_bid" | "increase_budget" | "decrease_budget" | "pause_campaign" | "enable_campaign" | "add_negative_keyword" | "adjust_placement",
+      "title": "short title (max 10 words)",
+      "description": "1-2 sentence description of what changed and what to do",
+      "rationale": "data-driven explanation: what changed (with % numbers), likely cause (seller action or market), and why this action helps",
+      "impact": "estimated outcome (e.g. 'Est. ACOS improvement from 70% to 50-55%')",
+      "confidence": "High" | "Medium" | "Low",
+      "currentValue": number | null,
+      "recommendedValue": number | null,
+      "unit": "$" | "%" | null
     }
   ]
 }
 
-Only include suggestions where there is a genuine actionable opportunity. 
-If a campaign is performing well with no changes needed, return an empty suggestions array for it.
-Include at most 2 suggestions per campaign.`;
+Only include suggestions where there is a genuine actionable opportunity.
+If the campaign is performing well with no changes needed, return an empty suggestions array.
+Include at most 3 suggestions.`;
 
     // Try up to 3 fallback models
     let result;

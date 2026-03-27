@@ -52,6 +52,7 @@ export interface Campaign {
   // Keyword & placement data
   keyword: string;
   bid: number;
+  keywordId?: string; // ID of the top keyword (for bid updates)
   placement: string; // "TOS" | "ROS" | "PP" or combined
   placementBidTOS: number; // % adjustment for Top of Search
   placementBidPP: number;  // % adjustment for Product Pages
