@@ -2,7 +2,6 @@
 
 import { useState, useCallback } from "react";
 import { Campaign, ChangeEvent, AISuggestion, Insight } from "@/lib/types";
-import { MOCK_CAMPAIGNS, MOCK_CHANGE_EVENTS, MOCK_INSIGHTS } from "@/lib/mock-data";
 import { formatLocalDate } from "@/lib/format";
 
 // ─── Campaign Suggestions Hook ─────────────────────────────────────────────
@@ -225,10 +224,18 @@ interface InsightsResponse {
   };
 }
 
+export interface FilterStats {
+  total: number;
+  analyzed: number;
+  skipped: number;
+  deadCount: number;
+}
+
 export function useAIInsights() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [portfolioSummary, setPortfolioSummary] = useState<InsightsResponse["portfolioSummary"] | null>(null);
+  const [filterStats, setFilterStats] = useState<FilterStats | null>(null);
 
   const generate = useCallback(
     async (
@@ -273,6 +280,7 @@ export function useAIInsights() {
 
         const data = json.data as InsightsResponse;
         if (data.portfolioSummary) setPortfolioSummary(data.portfolioSummary);
+        if (json.filterStats) setFilterStats(json.filterStats);
 
         const insights: Insight[] = data.insights.map((g, i) => ({
           id: `gemini-insight-${i}`,
@@ -319,5 +327,5 @@ export function useAIInsights() {
     []
   );
 
-  return { generate, loading, error, portfolioSummary };
+  return { generate, loading, error, portfolioSummary, filterStats };
 }

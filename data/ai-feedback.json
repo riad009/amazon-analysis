@@ -17,5 +17,23 @@
     "suggestionTitle": "Enable Paused Campaign",
     "action": "approve",
     "timestamp": "2026-03-05T08:42:51.127Z"
+  },
+  {
+    "id": "gemini-357104424378445-1774759240973-0",
+    "campaignId": "357104424378445",
+    "campaignName": "USF - SPB - Keywords related to product category",
+    "suggestionType": "pause_campaign",
+    "suggestionTitle": "Campaign Highly Unprofitable (ACOS 287%)",
+    "action": "approve",
+    "timestamp": "2026-03-29T04:44:33.362Z"
+  },
+  {
+    "id": "gemini-357104424378445-1774761912334-0",
+    "campaignId": "357104424378445",
+    "campaignName": "USF - SPB - Keywords related to product category",
+    "suggestionType": "pause_campaign",
+    "suggestionTitle": "Campaign Highly Unprofitable (ACOS 292.66%)",
+    "action": "approve",
+    "timestamp": "2026-03-29T05:25:18.746Z"
   }
 ]

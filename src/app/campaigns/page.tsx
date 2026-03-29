@@ -2,8 +2,7 @@
 
 import { useState, useMemo, useEffect, useCallback } from "react";
 import Link from "next/link";
-import { MOCK_CHANGE_EVENTS } from "@/lib/mock-data";
-import { Campaign, CampaignFilters, DateRange, DateRangePreset } from "@/lib/types";
+import { Campaign, CampaignFilters, ChangeEvent, DateRange, DateRangePreset } from "@/lib/types";
 import { DateRangePicker } from "@/components/campaigns/DateRangePicker";
 import { ProductFilter } from "@/components/campaigns/ProductFilter";
 import { CampaignTable } from "@/components/campaigns/CampaignTable";
@@ -21,11 +20,13 @@ import {
   Database,
   Clock,
   Info,
+  History,
 } from "lucide-react";
 import { useAISingleCampaign } from "@/hooks/useAI";
 import { useAmazonCampaigns, DataSource } from "@/hooks/useAmazonCampaigns";
 import { useAmazonProducts } from "@/hooks/useAmazonProducts";
 import { useToast } from "@/components/ui/toast";
+import { AIHistoryModal } from "@/components/insights/AIHistoryModal";
 
 function SourceBadge({ source, dataUpdatedAt }: { source: DataSource; dataUpdatedAt: Date | null }) {
   if (source === "live" && dataUpdatedAt) {
@@ -167,7 +168,51 @@ export default function CampaignsPage() {
     });
   }, [rawCampaigns, campaignOverrides, campaignProductMap]);
 
+  // Fetch real change events from CampaignHistory
+  const [changeEvents, setChangeEvents] = useState<ChangeEvent[]>([]);
+
+  const fetchChangeEvents = useCallback(async () => {
+    if (!selectedProfile) return;
+    try {
+      const res = await fetch(
+        `/api/amazon/campaigns/history?profileId=${encodeURIComponent(selectedProfile)}&limit=100`
+      );
+      const json = await res.json();
+      if (json.success && Array.isArray(json.data)) {
+        const events: ChangeEvent[] = json.data.map((h: {
+          _id: string;
+          campaignId: string;
+          field: string;
+          oldValue: string | number;
+          newValue: string | number;
+          changedAt: string;
+          changedBy: string;
+        }) => ({
+          id: h._id,
+          campaignId: h.campaignId,
+          campaignName: campaigns.find((c) => c.id === h.campaignId)?.name || h.campaignId,
+          changeType: (h.field === "dailyBudget" ? "budget" : h.field === "bid" ? "bid" : h.field === "status" ? "status" : "bid") as ChangeEvent["changeType"],
+          field: h.field,
+          oldValue: h.oldValue,
+          newValue: h.newValue,
+          changedAt: h.changedAt,
+          changedBy: "user" as const,
+        }));
+        setChangeEvents(events);
+      }
+    } catch (err) {
+      console.error("[Campaigns] Failed to load change history:", err);
+    }
+  }, [selectedProfile, campaigns]);
+
+  useEffect(() => {
+    if (selectedProfile && campaigns.length > 0) {
+      fetchChangeEvents();
+    }
+  }, [selectedProfile, campaigns.length, fetchChangeEvents]);
+
   const [aiError, setAiError] = useState<string | null>(null);
+  const [historyModalOpen, setHistoryModalOpen] = useState(false);
   const { showToast } = useToast();
 
   const {
@@ -186,12 +231,13 @@ export default function CampaignsPage() {
     action: "approve" | "deny" | "modify",
     note?: string
   ) {
+    const campaign = campaigns.find((c) => c.id === campaignId);
+    if (!campaign) return;
+
+    const suggestion = campaign.aiSuggestions.find((s) => s.id === suggestionId);
+
     setCampaignOverrides((prev) => {
       const next = new Map(prev);
-      const campaign = campaigns.find((c) => c.id === campaignId);
-      if (!campaign) return prev;
-
-      const suggestion = campaign.aiSuggestions.find((s) => s.id === suggestionId);
 
       const updatedSuggestions = campaign.aiSuggestions.map((s) =>
         s.id !== suggestionId
@@ -209,29 +255,30 @@ export default function CampaignsPage() {
       );
 
       next.set(campaignId, { aiSuggestions: updatedSuggestions });
-
-      // Persist feedback for AI learning (fire and forget)
-      if (suggestion) {
-        fetch("/api/ai/feedback", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            id: suggestionId,
-            campaignId,
-            campaignName: campaign.name,
-            suggestionType: suggestion.type,
-            suggestionTitle: suggestion.title,
-            action,
-            userNote: note || undefined,
-            currentValue: suggestion.currentValue,
-            recommendedValue: suggestion.recommendedValue,
-            unit: suggestion.unit,
-          }),
-        }).catch((err) => console.error("[Feedback save]", err));
-      }
-
       return next;
     });
+
+    // Persist feedback for AI learning (fire and forget) — outside setState to avoid double-fire
+    if (suggestion) {
+      const userEmail = (typeof window !== "undefined" && localStorage.getItem("userEmail")) || "unknown";
+      fetch("/api/ai/feedback", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          profileId: selectedProfile || "",
+          campaignId,
+          campaignName: campaign.name,
+          suggestionType: suggestion.type,
+          suggestionTitle: suggestion.title,
+          action,
+          userEmail,
+          userNote: note || undefined,
+          currentValue: suggestion.currentValue,
+          recommendedValue: suggestion.recommendedValue,
+          unit: suggestion.unit,
+        }),
+      }).catch((err) => console.error("[Feedback save]", err));
+    }
   }
 
   async function handleGenerateForCampaign(campaignId: string) {
@@ -241,7 +288,7 @@ export default function CampaignsPage() {
     try {
       const suggestions = await generateForCampaign(
         campaign,
-        MOCK_CHANGE_EVENTS,
+        changeEvents,
         dateRange
       );
       setCampaignOverrides((prev) => {
@@ -259,24 +306,34 @@ export default function CampaignsPage() {
   }
 
   // ── Campaign field update handler ──
-  const handleUpdateCampaign = useCallback(async (
-    campaignId: string,
-    field: string,
-    value: string | number,
-    extra?: { keywordId?: string }
-  ): Promise<{ success: boolean; error?: string }> => {
-    try {
-      const res = await fetch("/api/amazon/campaigns", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          campaignId,
-          field,
-          value,
-          keywordId: extra?.keywordId,
-          profileId: selectedProfile || undefined,
-        }),
-      });
+    // Replace with audit-logging update API
+    const handleUpdateCampaign = useCallback(async (
+      campaignId: string,
+      field: string,
+      value: string | number,
+      extra?: { keywordId?: string }
+    ): Promise<{ success: boolean; error?: string }> => {
+      try {
+        // TODO: Replace with real user info
+        const user = (typeof window !== "undefined" && localStorage.getItem("userEmail")) || "demo@user";
+        const res = await fetch("/api/amazon/campaigns/update", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            campaignId,
+            field,
+            value,
+            profileId: selectedProfile || undefined,
+            user,
+            extra,
+          }),
+        });
+
+      if (!res.ok) {
+        const json = await res.json().catch(() => ({ error: `Server error (${res.status})` }));
+        showToast(json.error || "Update failed", "error");
+        return { success: false, error: json.error };
+      }
 
       const json = await res.json();
       if (!json.success) {
@@ -284,7 +341,7 @@ export default function CampaignsPage() {
         return { success: false, error: json.error };
       }
 
-      // Optimistic UI update
+      // Apply update to UI after confirmed success
       setCampaignOverrides((prev) => {
         const next = new Map(prev);
         const existing = next.get(campaignId) || {};
@@ -359,6 +416,15 @@ export default function CampaignsPage() {
               {formatDistanceToNow(lastFetched, { addSuffix: true })}
             </span>
           )}
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-8 gap-1.5 text-xs"
+            onClick={() => setHistoryModalOpen(true)}
+          >
+            <History className="w-3.5 h-3.5" />
+            AI History
+          </Button>
           <Button
             variant="outline"
             size="sm"
@@ -469,11 +535,18 @@ export default function CampaignsPage() {
                 onGenerateAI={handleGenerateForCampaign}
                 aiLoadingCampaignId={aiLoadingCampaignId}
                 onUpdateCampaign={handleUpdateCampaign}
+                onApplySuggestion={handleUpdateCampaign}
               />
             </div>
           </>
         )}
       </div>
+
+      {/* AI History Modal */}
+      <AIHistoryModal
+        open={historyModalOpen}
+        onOpenChange={setHistoryModalOpen}
+      />
     </div>
   );
 }

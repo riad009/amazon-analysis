@@ -1,7 +1,9 @@
 "use client";
 
 import { useState, useMemo, Fragment, useRef, useCallback } from "react";
+import { useEffect } from "react";
 import { Campaign, PlacementMetrics, AISuggestion, BiddingStrategy } from "@/lib/types";
+import { CampaignHistoryModal } from "./CampaignHistoryModal";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -48,6 +50,7 @@ import {
   Check,
   X,
   Pencil,
+  History,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
@@ -87,6 +90,12 @@ interface CampaignTableProps {
   onUpdateCampaign?: (
     campaignId: string,
     field: EditableField,
+    value: string | number,
+    extra?: { keywordId?: string }
+  ) => Promise<{ success: boolean; error?: string }>;
+  onApplySuggestion?: (
+    campaignId: string,
+    field: string,
     value: string | number,
     extra?: { keywordId?: string }
   ) => Promise<{ success: boolean; error?: string }>;
@@ -165,6 +174,7 @@ export function CampaignTable({
   onGenerateAI,
   aiLoadingCampaignId,
   onUpdateCampaign,
+  onApplySuggestion,
 }: CampaignTableProps) {
   const [sortKey, setSortKey] = useState<SortKey>("acos");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
@@ -174,6 +184,11 @@ export function CampaignTable({
 
   // ── Edit state ──
   const [editState, setEditState] = useState<EditState | null>(null);
+
+  // ── History modal state ──
+  const [historyCampaignId, setHistoryCampaignId] = useState<string | null>(null);
+  const [historyCampaignName, setHistoryCampaignName] = useState<string>("");
+  const [historyOpen, setHistoryOpen] = useState(false);
 
   // ── Internal horizontal scroll tracking ──
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
@@ -830,8 +845,13 @@ export function CampaignTable({
                       <button
                         className="text-muted-foreground hover:text-foreground transition-colors"
                         title="View history"
+                        onClick={() => {
+                          setHistoryCampaignId(c.id);
+                          setHistoryCampaignName(c.name);
+                          setHistoryOpen(true);
+                        }}
                       >
-                        <TrendingUp className="w-3.5 h-3.5" />
+                        <History className="w-3.5 h-3.5" />
                       </button>
                     </TableCell>
 
@@ -911,6 +931,22 @@ export function CampaignTable({
                                   onAction={(sid, action, note) =>
                                     onSuggestionAction(c.id, sid, action, note)
                                   }
+                                  onApply={onApplySuggestion ? async (suggestion) => {
+                                    const fieldMap: Record<string, string> = {
+                                      raise_bid: "bid",
+                                      lower_bid: "bid",
+                                      increase_budget: "dailyBudget",
+                                      decrease_budget: "dailyBudget",
+                                      pause_campaign: "status",
+                                      enable_campaign: "status",
+                                    };
+                                    const field = fieldMap[suggestion.type];
+                                    let value: string | number = suggestion.recommendedValue!;
+                                    if (suggestion.type === "pause_campaign") value = "PAUSED";
+                                    if (suggestion.type === "enable_campaign") value = "ENABLED";
+                                    if (!field) return { success: false, error: "Unsupported action type" };
+                                    return onApplySuggestion(c.id, field, value);
+                                  } : undefined}
                                 />
                               ))}
                             </div>
@@ -953,6 +989,15 @@ export function CampaignTable({
           </button>
         </div>
       )}
+
+      {/* Campaign History Modal */}
+      <CampaignHistoryModal
+        open={historyOpen}
+        onOpenChange={setHistoryOpen}
+        campaignId={historyCampaignId || ""}
+        campaignName={historyCampaignName}
+        profileId={profileId || ""}
+      />
     </div>
   );
 }

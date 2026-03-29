@@ -15,6 +15,8 @@ import {
   ChevronUp,
   Sparkles,
   ArrowRight,
+  Loader2,
+  Zap,
 } from "lucide-react";
 
 interface AISuggestionPanelProps {
@@ -24,12 +26,14 @@ interface AISuggestionPanelProps {
     action: "approve" | "deny" | "modify",
     note?: string
   ) => void;
+  onApply?: (suggestion: AISuggestion) => Promise<{ success: boolean; error?: string }>;
 }
 
-export function AISuggestionPanel({ suggestion, onAction }: AISuggestionPanelProps) {
+export function AISuggestionPanel({ suggestion, onAction, onApply }: AISuggestionPanelProps) {
   const [expanded, setExpanded] = useState(false);
   const [mode, setMode] = useState<"idle" | "deny" | "modify">("idle");
   const [note, setNote] = useState("");
+  const [applying, setApplying] = useState(false);
 
   const isDone = suggestion.status !== "pending";
 
@@ -148,6 +152,27 @@ export function AISuggestionPanel({ suggestion, onAction }: AISuggestionPanelPro
       {/* Actions */}
       {!isDone && mode === "idle" && (
         <div className="flex items-center gap-2 px-3 pb-3">
+          {onApply && suggestion.recommendedValue !== undefined && (
+            <Button
+              size="sm"
+              className="h-7 text-xs gap-1.5 bg-emerald-600 hover:bg-emerald-700"
+              disabled={applying}
+              onClick={async () => {
+                setApplying(true);
+                try {
+                  const result = await onApply(suggestion);
+                  if (result.success) {
+                    onAction(suggestion.id, "approve");
+                  }
+                } finally {
+                  setApplying(false);
+                }
+              }}
+            >
+              {applying ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Zap className="w-3.5 h-3.5" />}
+              {applying ? "Applying…" : "Apply"}
+            </Button>
+          )}
           <Button
             size="sm"
             className="h-7 text-xs gap-1.5"

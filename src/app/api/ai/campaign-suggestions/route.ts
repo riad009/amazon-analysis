@@ -1,10 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getModel, rotateFallbackModel } from "@/lib/gemini";
 import { Campaign, ChangeEvent } from "@/lib/types";
-import { promises as fs } from "fs";
-import path from "path";
-
-const FEEDBACK_FILE = path.join(process.cwd(), "data", "ai-feedback.json");
+import { connectDB } from "@/lib/mongodb";
+import { AIHistory } from "@/lib/models/ai-history";
 
 const SYSTEM_PROMPT = `You are an expert Amazon PPC (Pay-Per-Click) advertising analyst.
 You think like a senior PPC manager with 10+ years of experience optimizing Sponsored Products campaigns.
@@ -63,17 +61,19 @@ export async function POST(req: NextRequest) {
       (e) => e.campaignId === campaign.id
     );
 
-    // Load past feedback for AI learning
+    // Load past feedback from MongoDB for AI learning
     let feedbackContext = "";
     try {
-      const feedbackData = await fs.readFile(FEEDBACK_FILE, "utf-8");
-      const feedback = JSON.parse(feedbackData);
-      if (feedback.length > 0) {
-        // Get last 50 entries for context
-        const recent = feedback.slice(-50);
-        const denials = recent.filter((f: Record<string, string>) => f.action === "deny");
-        const modifications = recent.filter((f: Record<string, string>) => f.action === "modify");
-        const approvals = recent.filter((f: Record<string, string>) => f.action === "approve");
+      await connectDB();
+      const recent = await AIHistory.find()
+        .sort({ timestamp: -1 })
+        .limit(50)
+        .lean();
+
+      if (recent.length > 0) {
+        const denials = recent.filter((f) => f.action === "deny");
+        const modifications = recent.filter((f) => f.action === "modify");
+        const approvals = recent.filter((f) => f.action === "approve");
 
         feedbackContext = `
 
@@ -81,18 +81,18 @@ export async function POST(req: NextRequest) {
 The seller has reviewed ${recent.length} past suggestions. Here is their decision history — USE THIS TO CALIBRATE YOUR RECOMMENDATIONS:
 
 ### Approved (${approvals.length} times) — These types of suggestions the seller likes:
-${approvals.map((f: Record<string, string>) => `- ${f.suggestionType}: "${f.suggestionTitle}" for "${f.campaignName}"`).join("\n")}
+${approvals.map((f) => `- ${f.suggestionType}: "${f.suggestionTitle}" for "${f.campaignName}" (by ${f.userEmail})`).join("\n")}
 
 ### Denied (${denials.length} times) — AVOID making similar suggestions:
-${denials.map((f: Record<string, string>) => `- ${f.suggestionType}: "${f.suggestionTitle}" for "${f.campaignName}"${f.userNote ? ` — Seller's reason: "${f.userNote}"` : ""}`).join("\n")}
+${denials.map((f) => `- ${f.suggestionType}: "${f.suggestionTitle}" for "${f.campaignName}"${f.userNote ? ` — Seller's reason: "${f.userNote}"` : ""} (by ${f.userEmail})`).join("\n")}
 
 ### Modified (${modifications.length} times) — The seller adjusted these:
-${modifications.map((f: Record<string, string>) => `- ${f.suggestionType}: "${f.suggestionTitle}" for "${f.campaignName}"${f.userNote ? ` — Seller's adjustment: "${f.userNote}"` : ""}`).join("\n")}
+${modifications.map((f) => `- ${f.suggestionType}: "${f.suggestionTitle}" for "${f.campaignName}"${f.userNote ? ` — Seller's adjustment: "${f.userNote}"` : ""} (by ${f.userEmail})`).join("\n")}
 
 IMPORTANT: Based on this feedback, adjust your suggestions. If the seller denied "lower_bid" suggestions, be more conservative with bid decreases. If they approved "increase_budget" suggestions, lean toward budget scaling. If they modified values, use their preferred range as a guide.`;
       }
     } catch {
-      // No feedback file yet — that's fine
+      // No feedback yet — that's fine
     }
 
     const prompt = `${SYSTEM_PROMPT}${feedbackContext}

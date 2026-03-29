@@ -559,7 +559,7 @@ export async function updateCampaign(
   if (!config) throw new Error("Amazon Ads credentials not configured");
 
   const campaign: Record<string, unknown> = {
-    campaignId: Number(params.campaignId),
+    campaignId: params.campaignId,
   };
 
   if (params.budget != null) {
@@ -620,7 +620,7 @@ export async function updateKeywordBid(
   const res = await adsRequest("/sp/keywords", config, {
     method: "PUT",
     body: JSON.stringify({
-      keywords: [{ keywordId: Number(keywordId), bid }],
+      keywords: [{ keywordId: keywordId, bid }],
     }),
     contentType: "application/vnd.spKeyword.v3+json",
     accept: "application/vnd.spKeyword.v3+json",

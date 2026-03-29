@@ -1,18 +1,17 @@
 "use client";
 
-import { useState, useMemo } from "react";
-import { MOCK_CAMPAIGNS, MOCK_INSIGHTS, MOCK_CHANGE_EVENTS } from "@/lib/mock-data";
-import { Insight, InsightSeverity } from "@/lib/types";
+import { useState, useMemo, useEffect, useCallback } from "react";
+import { ChangeEvent, Insight, InsightSeverity, Campaign } from "@/lib/types";
 import { InsightCard } from "@/components/insights/InsightCard";
 import { TimelineChart } from "@/components/insights/TimelineChart";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { useAIInsights } from "@/hooks/useAI";
+import { useAmazonCampaigns } from "@/hooks/useAmazonCampaigns";
 import { subDays } from "date-fns";
 import {
   Lightbulb,
-  RefreshCcw,
   CheckCircle2,
   BarChart3,
   Calendar,
@@ -24,8 +23,10 @@ import {
   TrendingUp,
   AlertTriangle,
   Brain,
+  History,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { AIHistoryModal } from "@/components/insights/AIHistoryModal";
 
 const SEVERITY_LABEL: Record<InsightSeverity, string> = {
   critical: "Critical",
@@ -37,13 +38,106 @@ const SEVERITY_LABEL: Record<InsightSeverity, string> = {
 const SEVERITY_ORDER: InsightSeverity[] = ["critical", "warning", "opportunity", "info"];
 
 export default function InsightsPage() {
-  const [insights, setInsights] = useState<Insight[]>(MOCK_INSIGHTS);
+  const [insights, setInsights] = useState<Insight[]>([]);
   const [severityFilter, setSeverityFilter] = useState<InsightSeverity | "All">("All");
   const [chartMetric, setChartMetric] = useState<"acos" | "sales">("acos");
   const [chartDays, setChartDays] = useState<7 | 14 | 30>(14);
   const [aiError, setAiError] = useState<string | null>(null);
+  const [changeEvents, setChangeEvents] = useState<ChangeEvent[]>([]);
+  const [historyModalOpen, setHistoryModalOpen] = useState(false);
 
-  const { generate, loading: aiLoading, portfolioSummary } = useAIInsights();
+  // Get selected profile from localStorage
+  const [selectedProfile, setSelectedProfile] = useState<string>(() => {
+    if (typeof window !== "undefined") {
+      try { return localStorage.getItem("selectedProfileId") ?? ""; } catch { return ""; }
+    }
+    return "";
+  });
+
+  // Listen for sidebar account change
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      if (detail?.profileId) setSelectedProfile(detail.profileId);
+    };
+    window.addEventListener("account-changed", handler);
+    return () => window.removeEventListener("account-changed", handler);
+  }, []);
+
+  // Fallback: if no profile after mount, fetch it
+  useEffect(() => {
+    if (selectedProfile) return;
+    fetch("/api/amazon/profiles")
+      .then((res) => res.json())
+      .then((json) => {
+        if (json.success && Array.isArray(json.data)) {
+          const sellers = json.data.filter(
+            (p: { accountInfo?: { type: string } }) => p.accountInfo?.type === "seller"
+          );
+          if (sellers.length > 0) {
+            const pid = String(sellers[0].profileId);
+            setSelectedProfile(pid);
+            try { localStorage.setItem("selectedProfileId", pid); } catch {}
+          }
+        }
+      })
+      .catch(() => {});
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const dateRange = useMemo(() => ({
+    from: subDays(new Date(), chartDays - 1),
+    to: new Date(),
+  }), [chartDays]);
+
+  // Fetch real campaign data from MongoDB
+  const {
+    campaigns,
+    loading: campaignsLoading,
+    error: campaignsError,
+  } = useAmazonCampaigns(dateRange, selectedProfile || undefined);
+
+  // Fetch real change history for this profile
+  const fetchChangeHistory = useCallback(async () => {
+    if (!selectedProfile) return;
+    try {
+      const res = await fetch(
+        `/api/amazon/campaigns/history?profileId=${encodeURIComponent(selectedProfile)}&limit=100`
+      );
+      const json = await res.json();
+      if (json.success && Array.isArray(json.data)) {
+        const events: ChangeEvent[] = json.data.map((h: {
+          _id: string;
+          campaignId: string;
+          field: string;
+          oldValue: string | number;
+          newValue: string | number;
+          changedAt: string;
+          changedBy: string;
+        }) => ({
+          id: h._id,
+          campaignId: h.campaignId,
+          campaignName: campaigns.find((c: Campaign) => c.id === h.campaignId)?.name || h.campaignId,
+          changeType: (h.field === "dailyBudget" ? "budget" : h.field === "bid" ? "bid" : h.field === "status" ? "status" : "bid") as ChangeEvent["changeType"],
+          field: h.field,
+          oldValue: h.oldValue,
+          newValue: h.newValue,
+          changedAt: h.changedAt,
+          changedBy: "user" as const,
+        }));
+        setChangeEvents(events);
+      }
+    } catch (err) {
+      console.error("[Insights] Failed to load change history:", err);
+    }
+  }, [selectedProfile, campaigns]);
+
+  useEffect(() => {
+    if (campaigns.length > 0 && selectedProfile) {
+      fetchChangeHistory();
+    }
+  }, [campaigns.length, selectedProfile, fetchChangeHistory]);
+
+  const { generate, loading: aiLoading, portfolioSummary, filterStats } = useAIInsights();
 
   const counts = useMemo(() => {
     const result: Record<InsightSeverity | "All", number> = {
@@ -73,13 +167,13 @@ export default function InsightsPage() {
   );
 
   async function handleGenerateAI() {
+    if (campaigns.length === 0) {
+      setAiError("No campaign data loaded yet. Please wait for data to load.");
+      return;
+    }
     setAiError(null);
-    const dateRange = {
-      from: subDays(new Date(), chartDays - 1),
-      to: new Date(),
-    };
     try {
-      const generated = await generate(MOCK_CAMPAIGNS, MOCK_CHANGE_EVENTS, dateRange);
+      const generated = await generate(campaigns, changeEvents, dateRange);
       if (generated.length > 0) setInsights(generated);
     } catch (err) {
       setAiError(String(err));
@@ -91,6 +185,8 @@ export default function InsightsPage() {
     action: "approve" | "deny" | "modify",
     note?: string
   ) {
+    const insight = insights.find((i) => i.id === insightId);
+
     setInsights((prev) =>
       prev.map((i) =>
         i.id !== insightId
@@ -106,6 +202,29 @@ export default function InsightsPage() {
             }
       )
     );
+
+    // Persist feedback to MongoDB (fire and forget)
+    if (insight) {
+      const userEmail =
+        (typeof window !== "undefined" && localStorage.getItem("userEmail")) || "unknown";
+      fetch("/api/ai/feedback", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          profileId: selectedProfile || "",
+          campaignId: insight.campaignId,
+          campaignName: insight.campaignName,
+          suggestionType: insight.structuredAction.type,
+          suggestionTitle: insight.structuredAction.title,
+          action,
+          userEmail,
+          userNote: note || undefined,
+          currentValue: insight.structuredAction.currentValue,
+          recommendedValue: insight.structuredAction.recommendedValue,
+          unit: insight.structuredAction.unit,
+        }),
+      }).catch((err) => console.error("[Feedback save]", err));
+    }
   }
 
   const approvedCount = insights.filter(
@@ -133,7 +252,12 @@ export default function InsightsPage() {
             </Badge>
           </div>
           <p className="text-xs text-muted-foreground mt-0.5">
-            Timeline-aware AI analysis · {insights.length} insights · thinks like a human PPC manager
+            Timeline-aware AI analysis · {insights.length} insights · {campaigns.length} campaigns loaded
+            {filterStats && (
+              <span className="ml-1">
+                · {filterStats.analyzed} analyzed, {filterStats.skipped} skipped ({filterStats.deadCount} inactive)
+              </span>
+            )}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -144,20 +268,45 @@ export default function InsightsPage() {
             </Badge>
           )}
           <Button
+            variant="outline"
+            size="sm"
+            className="h-8 gap-1.5 text-xs"
+            onClick={() => setHistoryModalOpen(true)}
+          >
+            <History className="w-3.5 h-3.5" />
+            AI History
+          </Button>
+          <Button
             size="sm"
             className="h-8 gap-1.5 text-xs"
             onClick={handleGenerateAI}
-            disabled={aiLoading}
+            disabled={aiLoading || campaignsLoading || campaigns.length === 0}
           >
             {aiLoading ? (
               <Loader2 className="w-3.5 h-3.5 animate-spin" />
             ) : (
               <Sparkles className="w-3.5 h-3.5" />
             )}
-            {aiLoading ? "Gemini is thinking…" : "Re-analyze with Gemini"}
+            {aiLoading ? "Gemini is thinking…" : "Analyze with Gemini"}
           </Button>
         </div>
       </div>
+
+      {/* Campaign loading state */}
+      {campaignsLoading && (
+        <div className="mx-6 mt-3 flex items-center gap-3 text-xs text-blue-700 bg-blue-50 border border-blue-200 rounded-lg px-4 py-3">
+          <Loader2 className="w-4 h-4 animate-spin shrink-0" />
+          <p>Loading campaign data from database…</p>
+        </div>
+      )}
+
+      {/* Campaigns error */}
+      {campaignsError && (
+        <div className="mx-6 mt-3 flex items-center gap-2 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-4 py-2.5">
+          <AlertCircle className="w-4 h-4 shrink-0" />
+          <span>Failed to load campaign data: {campaignsError}</span>
+        </div>
+      )}
 
       {/* AI error */}
       {aiError && (
@@ -275,7 +424,7 @@ export default function InsightsPage() {
                 Change event
               </span>
             </div>
-            <TimelineChart days={chartDays} changeEvents={MOCK_CHANGE_EVENTS} metric={chartMetric} />
+            <TimelineChart days={chartDays} changeEvents={changeEvents} metric={chartMetric} />
           </div>
         </div>
 
@@ -285,11 +434,16 @@ export default function InsightsPage() {
             <Layers className="w-4 h-4 text-muted-foreground" />
             <p className="text-sm font-semibold">Recent Change History</p>
             <Badge variant="outline" className="text-xs ml-auto">
-              {MOCK_CHANGE_EVENTS.length} changes
+              {changeEvents.length} changes
             </Badge>
           </div>
           <div className="divide-y">
-            {MOCK_CHANGE_EVENTS.map((ev) => (
+            {changeEvents.length === 0 && (
+              <div className="px-5 py-6 text-center text-xs text-muted-foreground">
+                No change history yet. Edit campaign fields to see changes here.
+              </div>
+            )}
+            {changeEvents.map((ev) => (
               <div key={ev.id} className="px-5 py-3 flex items-center gap-3 text-xs">
                 <div className="w-1.5 h-1.5 rounded-full bg-primary shrink-0 mt-0.5" />
                 <div className="flex-1 min-w-0">
@@ -352,7 +506,9 @@ export default function InsightsPage() {
             {sorted.length === 0 && (
               <div className="text-center py-16 text-muted-foreground text-sm rounded-xl border bg-background">
                 <Lightbulb className="w-8 h-8 mx-auto mb-3 opacity-30" />
-                No insights for this filter.
+                {campaigns.length === 0
+                  ? "Loading campaign data…"
+                  : "Click \"Analyze with Gemini\" to generate AI insights from your real campaign data."}
               </div>
             )}
             {sorted.map((insight) => (
@@ -361,6 +517,12 @@ export default function InsightsPage() {
           </div>
         </div>
       </div>
+
+      {/* AI History Modal */}
+      <AIHistoryModal
+        open={historyModalOpen}
+        onOpenChange={setHistoryModalOpen}
+      />
     </div>
   );
 }
