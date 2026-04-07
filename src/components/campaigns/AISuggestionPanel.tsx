@@ -2,11 +2,13 @@
 
 import { useState } from "react";
 import { AISuggestion } from "@/lib/types";
+import { Campaign } from "@/lib/types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import { confidenceBadgeVariant, formatCurrency } from "@/lib/format";
+import { AIChatPanel } from "./AIChatPanel";
 import {
   CheckCircle2,
   XCircle,
@@ -17,10 +19,12 @@ import {
   ArrowRight,
   Loader2,
   Zap,
+  MessageCircle,
 } from "lucide-react";
 
 interface AISuggestionPanelProps {
   suggestion: AISuggestion;
+  campaign: Campaign;
   onAction: (
     suggestionId: string,
     action: "approve" | "deny" | "modify",
@@ -29,11 +33,12 @@ interface AISuggestionPanelProps {
   onApply?: (suggestion: AISuggestion) => Promise<{ success: boolean; error?: string }>;
 }
 
-export function AISuggestionPanel({ suggestion, onAction, onApply }: AISuggestionPanelProps) {
+export function AISuggestionPanel({ suggestion, campaign, onAction, onApply }: AISuggestionPanelProps) {
   const [expanded, setExpanded] = useState(false);
   const [mode, setMode] = useState<"idle" | "deny" | "modify">("idle");
   const [note, setNote] = useState("");
   const [applying, setApplying] = useState(false);
+  const [chatOpen, setChatOpen] = useState(false);
 
   const isDone = suggestion.status !== "pending";
 
@@ -151,7 +156,7 @@ export function AISuggestionPanel({ suggestion, onAction, onApply }: AISuggestio
 
       {/* Actions */}
       {!isDone && mode === "idle" && (
-        <div className="flex items-center gap-2 px-3 pb-3">
+        <div className="flex items-center gap-2 px-3 pb-3 flex-wrap">
           {onApply && suggestion.recommendedValue !== undefined && (
             <Button
               size="sm"
@@ -199,6 +204,21 @@ export function AISuggestionPanel({ suggestion, onAction, onApply }: AISuggestio
             <XCircle className="w-3.5 h-3.5" />
             Deny
           </Button>
+          {/* Chat button */}
+          <Button
+            size="sm"
+            variant="outline"
+            className={cn(
+              "h-7 text-xs gap-1.5 ml-auto transition-all",
+              chatOpen
+                ? "border-primary bg-primary/10 text-primary hover:bg-primary/20"
+                : "border-primary/30 hover:border-primary hover:bg-primary/5 text-primary"
+            )}
+            onClick={() => setChatOpen((o) => !o)}
+          >
+            <MessageCircle className="w-3.5 h-3.5" />
+            {chatOpen ? "Close Chat" : "Chat"}
+          </Button>
         </div>
       )}
 
@@ -236,6 +256,16 @@ export function AISuggestionPanel({ suggestion, onAction, onApply }: AISuggestio
               Cancel
             </Button>
           </div>
+        </div>
+      )}
+
+      {/* AI Chat Panel */}
+      {chatOpen && (
+        <div className="px-3 pb-3">
+          <AIChatPanel
+            campaign={campaign}
+            onClose={() => setChatOpen(false)}
+          />
         </div>
       )}
     </div>

@@ -928,6 +928,7 @@ export function CampaignTable({
                                 <AISuggestionPanel
                                   key={s.id}
                                   suggestion={s}
+                                  campaign={c}
                                   onAction={(sid, action, note) =>
                                     onSuggestionAction(c.id, sid, action, note)
                                   }

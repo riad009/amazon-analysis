@@ -3,6 +3,7 @@ import { getModel, rotateFallbackModel } from "@/lib/gemini";
 import { Campaign, ChangeEvent } from "@/lib/types";
 import { connectDB } from "@/lib/mongodb";
 import { AIHistory } from "@/lib/models/ai-history";
+import { AIPromptSettings } from "@/lib/models/ai-prompt-settings";
 
 const SYSTEM_PROMPT = `You are an expert Amazon PPC (Pay-Per-Click) advertising analyst.
 You think like a senior PPC manager with 10+ years of experience optimizing Sponsored Products campaigns.
@@ -56,6 +57,26 @@ export async function POST(req: NextRequest) {
 
     const { campaign, changeEvents, dateRange } = body;
 
+    // Load admin-configured prompts from DB
+    let adminPromptAddendum = "";
+    try {
+      await connectDB();
+      const [profit, rank, maintenance] = await Promise.all([
+        AIPromptSettings.findOne({ mode: "profit" }).lean(),
+        AIPromptSettings.findOne({ mode: "rank" }).lean(),
+        AIPromptSettings.findOne({ mode: "maintenance" }).lean(),
+      ]);
+      const parts: string[] = [];
+      if (profit && (profit as { prompt: string }).prompt) parts.push(`## Profit Optimization Focus:\n${(profit as { prompt: string }).prompt}`);
+      if (rank && (rank as { prompt: string }).prompt) parts.push(`## Ranking Focus:\n${(rank as { prompt: string }).prompt}`);
+      if (maintenance && (maintenance as { prompt: string }).prompt) parts.push(`## Maintenance Focus:\n${(maintenance as { prompt: string }).prompt}`);
+      if (parts.length > 0) {
+        adminPromptAddendum = `\n\n## ADMIN-CONFIGURED STRATEGY GUIDELINES\nApply the most relevant guideline based on this campaign's situation:\n${parts.join("\n\n")}`;
+      }
+    } catch {
+      // Silently ignore if admin prompts can't be loaded
+    }
+
     // Filter change events to only this campaign
     const campaignChanges = changeEvents.filter(
       (e) => e.campaignId === campaign.id
@@ -95,7 +116,7 @@ IMPORTANT: Based on this feedback, adjust your suggestions. If the seller denied
       // No feedback yet — that's fine
     }
 
-    const prompt = `${SYSTEM_PROMPT}${feedbackContext}
+    const prompt = `${SYSTEM_PROMPT}${adminPromptAddendum}${feedbackContext}
 
 ## Date Range
 Current period: ${dateRange.from} to ${dateRange.to}

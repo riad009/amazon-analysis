@@ -12,6 +12,7 @@ import {
   Bell,
   ChevronRight,
   ChevronDown,
+  Settings,
 } from "lucide-react";
 
 interface AccountProfile {
@@ -44,6 +45,12 @@ const NAV_ITEMS = [
     label: "Manage Data",
     icon: Database,
     description: "Fetch schedule & history",
+  },
+  {
+    href: "/admin",
+    label: "Admin",
+    icon: Settings,
+    description: "AI prompt configuration",
   },
 ];
 
