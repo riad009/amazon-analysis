@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { Campaign } from "@/lib/types";
 import { Button } from "@/components/ui/button";
-import { Loader2, Send, Bot, User, X, MessageCircle } from "lucide-react";
+import { Loader2, Send, Bot, User, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface ChatMessage {
@@ -14,9 +14,10 @@ interface ChatMessage {
 interface AIChatPanelProps {
   campaign: Campaign;
   onClose: () => void;
+  initialMessage?: string;
 }
 
-export function AIChatPanel({ campaign, onClose }: AIChatPanelProps) {
+export function AIChatPanel({ campaign, onClose, initialMessage }: AIChatPanelProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
@@ -32,9 +33,18 @@ export function AIChatPanel({ campaign, onClose }: AIChatPanelProps) {
     scrollToBottom();
   }, [messages, scrollToBottom]);
 
-  // Auto-send opening message from AI on first mount
+  // Auto-fetch AI opening message on mount (skip if initialMessage provided)
   useEffect(() => {
     let cancelled = false;
+
+    // If we already have an AI analysis, use it directly — no API call needed
+    if (initialMessage) {
+      setMessages([{ role: "assistant", content: initialMessage }]);
+      setInitializing(false);
+      setTimeout(() => inputRef.current?.focus(), 100);
+      return;
+    }
+
     async function fetchOpening() {
       setInitializing(true);
       try {
@@ -49,18 +59,21 @@ export function AIChatPanel({ campaign, onClose }: AIChatPanelProps) {
         } else if (!cancelled) {
           setMessages([{
             role: "assistant",
-            content: `Hi! I'm your Amazon PPC assistant for **${campaign.name}**. Ask me anything about this campaign's performance, bids, or strategy.`,
+            content: `I'm ready to help you analyze ${campaign.name}. What would you like to know about this campaign?`,
           }]);
         }
       } catch {
         if (!cancelled) {
           setMessages([{
             role: "assistant",
-            content: `Hi! I'm ready to help you analyze **${campaign.name}**. What would you like to know?`,
+            content: `Ready to help with ${campaign.name}. Ask me anything about bids, ACOS, or strategy.`,
           }]);
         }
       } finally {
-        if (!cancelled) setInitializing(false);
+        if (!cancelled) {
+          setInitializing(false);
+          setTimeout(() => inputRef.current?.focus(), 100);
+        }
       }
     }
     fetchOpening();
@@ -85,14 +98,15 @@ export function AIChatPanel({ campaign, onClose }: AIChatPanelProps) {
         body: JSON.stringify({ campaign, messages: updated }),
       });
       const json = await res.json();
-      if (json.success) {
-        setMessages((prev) => [...prev, { role: "assistant", content: json.message }]);
-      } else {
-        setMessages((prev) => [
-          ...prev,
-          { role: "assistant", content: `Sorry, I encountered an error: ${json.error}` },
-        ]);
-      }
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: "assistant",
+          content: json.success
+            ? json.message
+            : `Error: ${json.error}`,
+        },
+      ]);
     } catch (err) {
       setMessages((prev) => [
         ...prev,
@@ -112,33 +126,34 @@ export function AIChatPanel({ campaign, onClose }: AIChatPanelProps) {
   }
 
   return (
-    <div className="mt-2 rounded-xl border border-primary/20 bg-gradient-to-b from-primary/5 to-background shadow-lg overflow-hidden">
-      {/* Header */}
-      <div className="flex items-center gap-2 px-3 py-2 bg-primary/10 border-b border-primary/15">
-        <div className="w-6 h-6 rounded-full bg-primary flex items-center justify-center shrink-0">
-          <MessageCircle className="w-3.5 h-3.5 text-primary-foreground" />
-        </div>
-        <div className="flex-1 min-w-0">
-          <p className="text-xs font-semibold text-foreground truncate">
+    <div className="border-t border-dashed border-primary/30 mt-3 pt-3">
+      {/* Section label */}
+      <div className="flex items-center justify-between mb-3 px-1">
+        <div className="flex items-center gap-1.5">
+          <Sparkles className="w-3.5 h-3.5 text-primary" />
+          <span className="text-[11px] font-semibold text-primary uppercase tracking-wide">
             AI Chat — {campaign.name}
-          </p>
-          <p className="text-[10px] text-muted-foreground">Campaign-specific Amazon PPC assistant</p>
+          </span>
         </div>
         <button
           onClick={onClose}
-          className="text-muted-foreground hover:text-foreground transition-colors shrink-0"
-          title="Close chat"
+          className="text-[10px] text-muted-foreground hover:text-foreground transition-colors underline underline-offset-2"
         >
-          <X className="w-3.5 h-3.5" />
+          close
         </button>
       </div>
 
-      {/* Messages */}
-      <div className="flex flex-col gap-2.5 px-3 py-3 max-h-[320px] overflow-y-auto scrollbar-thin">
+      {/* Message thread */}
+      <div className="flex flex-col gap-3 max-h-[280px] overflow-y-auto pr-1 pb-1 scrollbar-thin">
         {initializing ? (
-          <div className="flex items-center gap-2 text-xs text-muted-foreground py-2">
-            <Loader2 className="w-3.5 h-3.5 animate-spin" />
-            <span>Analyzing campaign…</span>
+          <div className="flex items-center gap-2 py-3 px-1">
+            <div className="w-6 h-6 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
+              <Bot className="w-3.5 h-3.5 text-primary" />
+            </div>
+            <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <Loader2 className="w-3 h-3 animate-spin" />
+              Analyzing campaign data…
+            </div>
           </div>
         ) : (
           messages.map((msg, idx) => (
@@ -152,26 +167,26 @@ export function AIChatPanel({ campaign, onClose }: AIChatPanelProps) {
               {/* Avatar */}
               <div
                 className={cn(
-                  "w-5 h-5 rounded-full flex items-center justify-center shrink-0 mt-0.5",
+                  "w-6 h-6 rounded-full flex items-center justify-center shrink-0 mt-0.5",
                   msg.role === "assistant"
-                    ? "bg-primary text-primary-foreground"
-                    : "bg-muted text-foreground"
+                    ? "bg-primary/10 border border-primary/20"
+                    : "bg-muted border border-border"
                 )}
               >
                 {msg.role === "assistant" ? (
-                  <Bot className="w-3 h-3" />
+                  <Bot className="w-3.5 h-3.5 text-primary" />
                 ) : (
-                  <User className="w-3 h-3" />
+                  <User className="w-3.5 h-3.5 text-muted-foreground" />
                 )}
               </div>
 
-              {/* Bubble */}
+              {/* Message bubble */}
               <div
                 className={cn(
-                  "rounded-xl px-3 py-2 text-xs max-w-[85%] leading-relaxed",
+                  "text-xs leading-relaxed rounded-xl px-3 py-2 max-w-[82%]",
                   msg.role === "assistant"
-                    ? "bg-muted text-foreground rounded-tl-none"
-                    : "bg-primary text-primary-foreground rounded-tr-none"
+                    ? "bg-muted text-foreground rounded-tl-sm"
+                    : "bg-primary text-primary-foreground rounded-tr-sm"
                 )}
               >
                 {msg.content}
@@ -180,16 +195,16 @@ export function AIChatPanel({ campaign, onClose }: AIChatPanelProps) {
           ))
         )}
 
-        {/* Typing indicator */}
+        {/* AI typing indicator */}
         {loading && (
           <div className="flex gap-2 items-start">
-            <div className="w-5 h-5 rounded-full bg-primary text-primary-foreground flex items-center justify-center shrink-0">
-              <Bot className="w-3 h-3" />
+            <div className="w-6 h-6 rounded-full bg-primary/10 border border-primary/20 flex items-center justify-center shrink-0">
+              <Bot className="w-3.5 h-3.5 text-primary" />
             </div>
-            <div className="bg-muted rounded-xl rounded-tl-none px-3 py-2 flex items-center gap-1">
-              <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground animate-bounce [animation-delay:0ms]" />
-              <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground animate-bounce [animation-delay:150ms]" />
-              <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground animate-bounce [animation-delay:300ms]" />
+            <div className="bg-muted rounded-xl rounded-tl-sm px-3 py-2.5 flex items-center gap-1.5">
+              <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground/60 animate-bounce [animation-delay:0ms]" />
+              <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground/60 animate-bounce [animation-delay:150ms]" />
+              <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground/60 animate-bounce [animation-delay:300ms]" />
             </div>
           </div>
         )}
@@ -197,24 +212,25 @@ export function AIChatPanel({ campaign, onClose }: AIChatPanelProps) {
         <div ref={messagesEndRef} />
       </div>
 
-      {/* Input */}
-      <div className="border-t border-primary/15 p-2 flex gap-2 items-end bg-background/50">
+      {/* Input row */}
+      <div className="flex gap-2 items-end mt-3 pt-2 border-t border-border/50">
         <textarea
           ref={inputRef}
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder="Ask about this campaign… (Enter to send)"
+          placeholder="Ask about this campaign… (⏎ to send)"
           disabled={loading || initializing}
           rows={1}
-          className="flex-1 text-xs rounded-lg border border-input bg-background px-3 py-2 resize-none focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary transition-all min-h-[34px] max-h-[100px] placeholder:text-muted-foreground disabled:opacity-50"
+          className="flex-1 text-xs rounded-lg border border-input bg-background/70 px-3 py-2 resize-none focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary transition-all placeholder:text-muted-foreground disabled:opacity-50 min-h-[34px] max-h-[90px]"
           style={{ fieldSizing: "content" } as React.CSSProperties}
         />
         <Button
           size="sm"
-          className="h-[34px] px-3 shrink-0 bg-primary hover:bg-primary/90"
+          className="h-[34px] w-[34px] p-0 shrink-0"
           onClick={handleSend}
           disabled={!input.trim() || loading || initializing}
+          title="Send (Enter)"
         >
           {loading ? (
             <Loader2 className="w-3.5 h-3.5 animate-spin" />

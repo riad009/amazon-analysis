@@ -53,9 +53,10 @@ export async function POST(req: NextRequest) {
       campaign: Campaign;
       changeEvents: ChangeEvent[];
       dateRange: { from: string; to: string };
+      goal?: "profit" | "rank" | "maintenance";
     };
 
-    const { campaign, changeEvents, dateRange } = body;
+    const { campaign, changeEvents, dateRange, goal } = body;
 
     // Load admin-configured prompts from DB
     let adminPromptAddendum = "";
@@ -66,12 +67,29 @@ export async function POST(req: NextRequest) {
         AIPromptSettings.findOne({ mode: "rank" }).lean(),
         AIPromptSettings.findOne({ mode: "maintenance" }).lean(),
       ]);
-      const parts: string[] = [];
-      if (profit && (profit as { prompt: string }).prompt) parts.push(`## Profit Optimization Focus:\n${(profit as { prompt: string }).prompt}`);
-      if (rank && (rank as { prompt: string }).prompt) parts.push(`## Ranking Focus:\n${(rank as { prompt: string }).prompt}`);
-      if (maintenance && (maintenance as { prompt: string }).prompt) parts.push(`## Maintenance Focus:\n${(maintenance as { prompt: string }).prompt}`);
-      if (parts.length > 0) {
-        adminPromptAddendum = `\n\n## ADMIN-CONFIGURED STRATEGY GUIDELINES\nApply the most relevant guideline based on this campaign's situation:\n${parts.join("\n\n")}`;
+
+      const goalLabels: Record<string, string> = {
+        profit: "Profit Optimization",
+        rank: "Ranking & Visibility",
+        maintenance: "Maintenance & Stability",
+      };
+
+      if (goal) {
+        // User selected a specific goal — prioritize it
+        const modeMap: Record<string, typeof profit> = { profit, rank, maintenance };
+        const selected = modeMap[goal];
+        const selectedPrompt = selected && (selected as { prompt: string }).prompt;
+        adminPromptAddendum = `\n\n## USER-SELECTED STRATEGY: ${goalLabels[goal]?.toUpperCase()}
+ALL suggestions MUST be optimized for ${goalLabels[goal]?.toLowerCase()}.
+${goal === "profit" ? "Focus on maximizing ROAS, reducing ACOS, and improving profitability. Be conservative with spend increases." : ""}${goal === "rank" ? "Focus on increasing impressions, Top of Search placement, click volume, and organic rank. Accept higher ACOS if it drives visibility." : ""}${goal === "maintenance" ? "Focus on maintaining current performance levels with minimal risk. Avoid aggressive changes. Only suggest fine-tuning adjustments." : ""}${selectedPrompt ? `\n\nAdmin guidelines for this mode:\n${selectedPrompt}` : ""}`;
+      } else {
+        const parts: string[] = [];
+        if (profit && (profit as { prompt: string }).prompt) parts.push(`## Profit Optimization Focus:\n${(profit as { prompt: string }).prompt}`);
+        if (rank && (rank as { prompt: string }).prompt) parts.push(`## Ranking Focus:\n${(rank as { prompt: string }).prompt}`);
+        if (maintenance && (maintenance as { prompt: string }).prompt) parts.push(`## Maintenance Focus:\n${(maintenance as { prompt: string }).prompt}`);
+        if (parts.length > 0) {
+          adminPromptAddendum = `\n\n## ADMIN-CONFIGURED STRATEGY GUIDELINES\nApply the most relevant guideline based on this campaign's situation:\n${parts.join("\n\n")}`;
+        }
       }
     } catch {
       // Silently ignore if admin prompts can't be loaded

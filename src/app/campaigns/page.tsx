@@ -281,7 +281,7 @@ export default function CampaignsPage() {
     }
   }
 
-  async function handleGenerateForCampaign(campaignId: string) {
+  async function handleGenerateForCampaign(campaignId: string, goal: "profit" | "rank" | "maintenance") {
     setAiError(null);
     const campaign = campaigns.find((c) => c.id === campaignId);
     if (!campaign) return;
@@ -289,7 +289,8 @@ export default function CampaignsPage() {
       const suggestions = await generateForCampaign(
         campaign,
         changeEvents,
-        dateRange
+        dateRange,
+        goal
       );
       setCampaignOverrides((prev) => {
         const next = new Map(prev);

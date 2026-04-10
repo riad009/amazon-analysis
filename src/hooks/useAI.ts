@@ -115,7 +115,8 @@ export function useAISingleCampaign() {
     async (
       campaign: Campaign,
       changeEvents: ChangeEvent[],
-      dateRange: { from: Date; to: Date }
+      dateRange: { from: Date; to: Date },
+      goal?: "profit" | "rank" | "maintenance"
     ): Promise<AISuggestion[]> => {
       if (loadingCampaignId) return []; // prevent parallel calls
       setLoadingCampaignId(campaign.id);
@@ -132,6 +133,7 @@ export function useAISingleCampaign() {
               from: formatLocalDate(dateRange.from),
               to: formatLocalDate(dateRange.to),
             },
+            goal,
           }),
         });
 

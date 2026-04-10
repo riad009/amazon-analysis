@@ -51,8 +51,17 @@ import {
   X,
   Pencil,
   History,
+  DollarSign,
+  Trophy,
+  Shield,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 // ─── Editable Field Types ────────────────────────────────────────────────────
 
@@ -85,7 +94,7 @@ interface CampaignTableProps {
     action: "approve" | "deny" | "modify",
     note?: string
   ) => void;
-  onGenerateAI: (campaignId: string) => void;
+  onGenerateAI: (campaignId: string, goal: "profit" | "rank" | "maintenance") => void;
   aiLoadingCampaignId: string | null;
   onUpdateCampaign?: (
     campaignId: string,
@@ -642,6 +651,7 @@ export function CampaignTable({
                   }}
                 />
               </TableHead>
+              <TableHead className="whitespace-nowrap">AI</TableHead>
               <SortableHead sortKey="portfolio" label="Portfolio" />
               <SortableHead sortKey="name" label="Campaign" minW="220px" />
               <SortableHead sortKey="keyword" label="Keyword" />
@@ -663,7 +673,6 @@ export function CampaignTable({
               <SortableHead sortKey="ctr" label="CTR" align="right" />
               <SortableHead sortKey="roas" label="ROAS" align="right" tooltip="Return on Ad Spend" />
               <TableHead className="whitespace-nowrap">History</TableHead>
-              <TableHead className="whitespace-nowrap">AI Suggestion</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -693,6 +702,81 @@ export function CampaignTable({
                         checked={isSelected}
                         onCheckedChange={(v) => toggleOne(c.id, !!v)}
                       />
+                    </TableCell>
+
+                    {/* AI Suggestion / Expand — first column */}
+                    <TableCell>
+                      {aiLoadingCampaignId === c.id ? (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-7 text-xs gap-1.5 pointer-events-none"
+                          disabled
+                        >
+                          <Loader2 className="w-3.5 h-3.5 animate-spin text-primary" />
+                        </Button>
+                      ) : pendingSuggestions.length > 0 ? (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <button
+                              onClick={() => setExpandedId(isExpanded ? null : c.id)}
+                              className="shrink-0"
+                            >
+                              <Badge className="gap-1 text-[10px] cursor-pointer">
+                                <Sparkles className="w-2.5 h-2.5" />
+                                {pendingSuggestions.length}
+                              </Badge>
+                            </button>
+                          </TooltipTrigger>
+                          <TooltipContent>View AI suggestions</TooltipContent>
+                        </Tooltip>
+                      ) : (
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-7 text-xs gap-1.5 border-primary/30 hover:border-primary hover:bg-primary/5 transition-all"
+                              disabled={!!aiLoadingCampaignId}
+                            >
+                              <Wand2 className="w-3 h-3 text-primary" />
+                              AI Suggest
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="start" className="w-48">
+                            <DropdownMenuItem
+                              className="gap-2 cursor-pointer"
+                              onClick={() => onGenerateAI(c.id, "profit")}
+                            >
+                              <DollarSign className="w-4 h-4 text-emerald-600" />
+                              <div>
+                                <p className="font-medium text-xs">Profit</p>
+                                <p className="text-[10px] text-muted-foreground">Maximize ROAS & reduce ACOS</p>
+                              </div>
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              className="gap-2 cursor-pointer"
+                              onClick={() => onGenerateAI(c.id, "rank")}
+                            >
+                              <Trophy className="w-4 h-4 text-amber-500" />
+                              <div>
+                                <p className="font-medium text-xs">Rank</p>
+                                <p className="text-[10px] text-muted-foreground">Boost visibility & impressions</p>
+                              </div>
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              className="gap-2 cursor-pointer"
+                              onClick={() => onGenerateAI(c.id, "maintenance")}
+                            >
+                              <Shield className="w-4 h-4 text-blue-500" />
+                              <div>
+                                <p className="font-medium text-xs">Maintenance</p>
+                                <p className="text-[10px] text-muted-foreground">Steady performance & stability</p>
+                              </div>
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      )}
                     </TableCell>
 
                     {/* 1. Portfolio */}
@@ -853,47 +937,6 @@ export function CampaignTable({
                       >
                         <History className="w-3.5 h-3.5" />
                       </button>
-                    </TableCell>
-
-                    {/* 22. AI Suggestion / Expand */}
-                    <TableCell>
-                      {aiLoadingCampaignId === c.id ? (
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          className="h-7 text-xs gap-1.5 pointer-events-none"
-                          disabled
-                        >
-                          <Loader2 className="w-3.5 h-3.5 animate-spin text-primary" />
-                          <span className="text-muted-foreground">Analyzing…</span>
-                        </Button>
-                      ) : pendingSuggestions.length > 0 ? (
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <button
-                              onClick={() => setExpandedId(isExpanded ? null : c.id)}
-                              className="shrink-0"
-                            >
-                              <Badge className="gap-1 text-[10px] cursor-pointer">
-                                <Sparkles className="w-2.5 h-2.5" />
-                                {pendingSuggestions.length}
-                              </Badge>
-                            </button>
-                          </TooltipTrigger>
-                          <TooltipContent>View AI suggestions</TooltipContent>
-                        </Tooltip>
-                      ) : (
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          className="h-7 text-xs gap-1.5 border-primary/30 hover:border-primary hover:bg-primary/5 transition-all"
-                          onClick={() => onGenerateAI(c.id)}
-                          disabled={!!aiLoadingCampaignId}
-                        >
-                          <Wand2 className="w-3 h-3 text-primary" />
-                          AI Suggest
-                        </Button>
-                      )}
                     </TableCell>
                   </TableRow>
 
